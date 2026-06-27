@@ -273,11 +273,11 @@ func (s *Server) apiRefreshProxy(w http.ResponseWriter, r *http.Request) {
 		v := validator.New(1, cfg.ValidateTimeout, cfg.ValidateURL)
 
 		log.Printf("[webui] refreshing proxy: %s", req.Address)
-		valid, latency, exitIP, exitLocation := v.ValidateOne(*targetProxy)
+		result := v.ValidateOneWithQuality(*targetProxy)
 
-		if valid {
-			latencyMs := int(latency.Milliseconds())
-			s.storage.UpdateExitInfo(req.Address, exitIP, exitLocation, latencyMs)
+		if result.Valid {
+			latencyMs := int(result.Latency.Milliseconds())
+			s.storage.UpdateExitInfoWithQuality(req.Address, result.ExitIP, result.ExitLocation, result.IPType, result.RiskScore, result.RiskLevel, result.IsResidential, latencyMs)
 			log.Printf("[webui] proxy refreshed: %s latency=%dms grade=%s", req.Address, latencyMs, storage.CalculateQualityGrade(latencyMs))
 		} else {
 			if targetProxy.Source == "custom" {
@@ -327,7 +327,7 @@ func (s *Server) apiRefreshLatency(w http.ResponseWriter, r *http.Request) {
 		for r := range validate.ValidateStream(proxies) {
 			if r.Valid {
 				latencyMs := int(r.Latency.Milliseconds())
-				s.storage.UpdateExitInfo(r.Proxy.Address, r.ExitIP, r.ExitLocation, latencyMs)
+				s.storage.UpdateExitInfoWithQuality(r.Proxy.Address, r.ExitIP, r.ExitLocation, r.IPType, r.RiskScore, r.RiskLevel, r.IsResidential, latencyMs)
 				updated++
 			} else {
 				if r.Proxy.Source == "custom" {

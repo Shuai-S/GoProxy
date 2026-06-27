@@ -180,19 +180,19 @@ func (m *Manager) probeDisabled() {
 	recovered := 0
 	recoveredSubs := make(map[int64]bool)
 	for _, proxy := range disabled {
-		valid, latency, exitIP, exitLocation := m.validator.ValidateOne(proxy)
-		if valid {
+		result := m.validator.ValidateOneWithQuality(proxy)
+		if result.Valid {
 			// 检查地理过滤：恢复前确认不在屏蔽列表中
-			if exitLocation != "" && isGeoBlocked(exitLocation, cfg) {
-				log.Printf("[custom] 代理 %s 验证通过但被地理过滤 (%s)，保持禁用", proxy.Address, exitLocation)
-				m.storage.UpdateExitInfo(proxy.Address, exitIP, exitLocation, int(latency.Milliseconds()))
+			if result.ExitLocation != "" && isGeoBlocked(result.ExitLocation, cfg) {
+				log.Printf("[custom] 代理 %s 验证通过但被地理过滤 (%s)，保持禁用", proxy.Address, result.ExitLocation)
+				m.storage.UpdateExitInfoWithQuality(proxy.Address, result.ExitIP, result.ExitLocation, result.IPType, result.RiskScore, result.RiskLevel, result.IsResidential, int(result.Latency.Milliseconds()))
 				continue
 			}
 			m.storage.EnableProxy(proxy.Address)
-			m.storage.UpdateExitInfo(proxy.Address, exitIP, exitLocation, int(latency.Milliseconds()))
+			m.storage.UpdateExitInfoWithQuality(proxy.Address, result.ExitIP, result.ExitLocation, result.IPType, result.RiskScore, result.RiskLevel, result.IsResidential, int(result.Latency.Milliseconds()))
 			recovered++
 			recoveredSubs[proxy.SubscriptionID] = true
-			log.Printf("[custom] ✅ 代理 %s 恢复可用 (%dms)", proxy.Address, latency.Milliseconds())
+			log.Printf("[custom] ✅ 代理 %s 恢复可用 (%dms)", proxy.Address, result.Latency.Milliseconds())
 		}
 	}
 	// 有恢复的代理则更新对应订阅的 last_success
@@ -477,7 +477,7 @@ func (m *Manager) validateCustomProxies(proxies []storage.Proxy, subID int64) in
 	for result := range resultCh {
 		if result.Valid {
 			latencyMs := int(result.Latency.Milliseconds())
-			m.storage.UpdateExitInfo(result.Proxy.Address, result.ExitIP, result.ExitLocation, latencyMs)
+			m.storage.UpdateExitInfoWithQuality(result.Proxy.Address, result.ExitIP, result.ExitLocation, result.IPType, result.RiskScore, result.RiskLevel, result.IsResidential, latencyMs)
 			// 检查地理过滤
 			if result.ExitLocation != "" && isGeoBlocked(result.ExitLocation, cfg) {
 				m.storage.DisableProxy(result.Proxy.Address)

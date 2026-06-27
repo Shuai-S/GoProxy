@@ -73,7 +73,7 @@ body::after{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backgr
 .proxy-logo{font-size:28px;font-weight:900;letter-spacing:0.2em;font-family:var(--mono);text-transform:uppercase;color:var(--fg);text-shadow:0 0 15px var(--fg),0 0 30px var(--fg);animation:glow 2s ease-in-out infinite alternate}
 @keyframes glow{0%{text-shadow:0 0 15px var(--fg),0 0 30px var(--fg)}100%{text-shadow:0 0 20px var(--fg),0 0 40px var(--fg),0 0 60px var(--fg)}}
 .user-badge{font-size:10px;color:var(--fg-dim);font-family:var(--mono);letter-spacing:0.08em;opacity:0.6}
-.proxy-content{}
+.proxy-content{overflow-x:auto}
 .header-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}
 
 /* 响应式：屏幕小于1200px时变为单列 */
@@ -146,6 +146,10 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
 .badge{display:inline-block;padding:3px 8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;border:1px solid;font-family:var(--mono)}
 .badge-http{border-color:var(--fg-dim);color:var(--fg-dim);background:transparent}
 .badge-socks5{background:var(--fg-dim);color:#000;border-color:var(--fg-dim);box-shadow:0 0 6px var(--fg-dim)}
+.badge-risk-low{border-color:var(--green);color:var(--green);background:rgba(0,255,65,0.08)}
+.badge-risk-med{border-color:var(--yellow);color:var(--yellow);background:rgba(255,255,0,0.08)}
+.badge-risk-high{border-color:var(--red);color:var(--red);background:rgba(255,0,51,0.08)}
+.badge-muted{border-color:var(--border);color:var(--fg-dim);background:transparent}
 .latency{font-weight:600}
 .latency-excellent{color:var(--green)}
 .latency-good{color:#333}
@@ -615,9 +619,14 @@ const i18n = {
     'proxy.th_address': '地址',
     'proxy.th_exit_ip': '出口IP',
     'proxy.th_location': '位置',
+    'proxy.th_ip_type': 'IP类型',
+    'proxy.th_risk': '风险',
+    'proxy.th_residential': '住宅',
     'proxy.th_latency': '延迟',
     'proxy.th_usage': '使用统计',
     'proxy.th_action': '操作',
+    'proxy.yes': '是',
+    'proxy.no': '否',
     'proxy.btn_delete': '删除',
     'proxy.btn_refresh': '刷新',
     'proxy.copy_success': '已复制',
@@ -775,9 +784,14 @@ const i18n = {
     'proxy.th_address': 'Address',
     'proxy.th_exit_ip': 'Exit IP',
     'proxy.th_location': 'Location',
+    'proxy.th_ip_type': 'IP Type',
+    'proxy.th_risk': 'Risk',
+    'proxy.th_residential': 'Residential',
     'proxy.th_latency': 'Latency',
     'proxy.th_usage': 'Usage',
     'proxy.th_action': 'Action',
+    'proxy.yes': 'Yes',
+    'proxy.no': 'No',
     'proxy.btn_delete': 'DEL',
     'proxy.btn_refresh': 'Refresh',
     'proxy.copy_success': 'Copied',
@@ -1010,6 +1024,20 @@ function getCountryFlag(countryCode) {
   return countryCode.toUpperCase().split('').map(c => String.fromCodePoint(c.charCodeAt(0) + offset)).join('');
 }
 
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+function jsString(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function showToast(message) {
   const toast = document.getElementById('toast');
   toast.textContent = message;
@@ -1168,7 +1196,7 @@ function updateCountryOptions() {
 function filterAndRender() {
   let filtered = allProxies;
   if (currentCountry) {
-    filtered = filtered.filter(p => p.exit_location && p.exit_location.startsWith(currentCountry + ' '));
+    filtered = filtered.filter(p => p.exit_location && (p.exit_location === currentCountry || p.exit_location.startsWith(currentCountry + ' ')));
   }
   renderProxies(filtered);
 }
@@ -1183,6 +1211,29 @@ function setCountryFilter(country) {
   filterAndRender();
 }
 
+function renderRiskBadge(p) {
+  const level = p.risk_level || 'Unknown';
+  if (!level || level === 'Unknown') {
+    return '<span class="badge badge-muted">—</span>';
+  }
+  const score = Number(p.risk_score || 0);
+  const cls = score < 0.25 ? 'badge-risk-low' : score < 0.5 ? 'badge-risk-med' : 'badge-risk-high';
+  return '<span class="badge ' + cls + '">' + esc(level) + ' ' + Math.round(score * 100) + '%</span>';
+}
+
+function hasIPProfile(p) {
+  return !!(p.ip_type || (p.risk_level && p.risk_level !== 'Unknown'));
+}
+
+function renderResidentialBadge(p) {
+  if (!hasIPProfile(p)) {
+    return '<span class="badge badge-muted">—</span>';
+  }
+  return p.is_residential
+    ? '<span class="badge badge-risk-low">' + t('proxy.yes') + '</span>'
+    : '<span class="badge badge-muted">' + t('proxy.no') + '</span>';
+}
+
 function renderProxies(proxies) {
   let html = '';
   if (proxies.length === 0) {
@@ -1194,6 +1245,9 @@ function renderProxies(proxies) {
     html += '<th data-i18n="proxy.th_address">' + t('proxy.th_address') + '</th>';
     html += '<th data-i18n="proxy.th_exit_ip">' + t('proxy.th_exit_ip') + '</th>';
     html += '<th data-i18n="proxy.th_location">' + t('proxy.th_location') + '</th>';
+    html += '<th data-i18n="proxy.th_ip_type">' + t('proxy.th_ip_type') + '</th>';
+    html += '<th data-i18n="proxy.th_risk">' + t('proxy.th_risk') + '</th>';
+    html += '<th data-i18n="proxy.th_residential">' + t('proxy.th_residential') + '</th>';
     html += '<th data-i18n="proxy.th_latency">' + t('proxy.th_latency') + '</th>';
     html += '<th data-i18n="proxy.th_usage">' + t('proxy.th_usage') + '</th>';
     if (isAdmin) {
@@ -1215,16 +1269,19 @@ function renderProxies(proxies) {
         html += ' <span style="display:inline-block;background:var(--yellow);color:#000;font-size:8px;font-weight:700;padding:1px 4px;margin-left:4px;letter-spacing:0.05em">' + subName + '</span>';
       }
       html += '</td>';
-      html += '<td class="cell-mono cell-clickable" onclick="copyToClipboard(\'' + p.address + '\')" title="Copy">' + p.address + '</td>';
-      html += '<td class="cell-mono">' + (p.exit_ip || '—') + '</td>';
-      html += '<td>' + flag + ' ' + (p.exit_location || '—') + '</td>';
+      html += '<td class="cell-mono cell-clickable" onclick="copyToClipboard(\'' + jsString(p.address) + '\')" title="Copy">' + esc(p.address) + '</td>';
+      html += '<td class="cell-mono">' + (p.exit_ip ? esc(p.exit_ip) : '—') + '</td>';
+      html += '<td>' + flag + ' ' + (p.exit_location ? esc(p.exit_location) : '—') + '</td>';
+      html += '<td class="cell-mono">' + (p.ip_type ? esc(p.ip_type) : '—') + '</td>';
+      html += '<td>' + renderRiskBadge(p) + '</td>';
+      html += '<td>' + renderResidentialBadge(p) + '</td>';
       html += '<td class="cell-mono ' + latencyClass + '">' + (p.latency > 0 ? p.latency + 'ms' : '—') + '</td>';
       html += '<td class="cell-mono">' + (p.use_count || 0) + ' / ' + (p.success_count || 0) + '</td>';
       
       if (isAdmin) {
         html += '<td>';
-        html += '<button class="btn-action" onclick="refreshProxy(\'' + p.address + '\')" data-i18n="proxy.btn_refresh">' + t('proxy.btn_refresh') + '</button>';
-        html += '<button class="btn-danger" onclick="deleteProxy(\'' + p.address + '\')" data-i18n="proxy.btn_delete">' + t('proxy.btn_delete') + '</button>';
+        html += '<button class="btn-action" onclick="refreshProxy(\'' + jsString(p.address) + '\')" data-i18n="proxy.btn_refresh">' + t('proxy.btn_refresh') + '</button>';
+        html += '<button class="btn-danger" onclick="deleteProxy(\'' + jsString(p.address) + '\')" data-i18n="proxy.btn_delete">' + t('proxy.btn_delete') + '</button>';
         html += '</td>';
       }
       

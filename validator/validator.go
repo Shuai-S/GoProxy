@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,20 +47,60 @@ func New(concurrency, timeoutSec int, validateURL string) *Validator {
 }
 
 type Result struct {
-	Proxy        storage.Proxy
-	Valid        bool
-	Latency      time.Duration
-	ExitIP       string
-	ExitLocation string
-	Reason       string
+	Proxy         storage.Proxy
+	Valid         bool
+	Latency       time.Duration
+	ExitIP        string
+	ExitLocation  string
+	IPType        string
+	RiskScore     float64
+	RiskLevel     string
+	IsResidential bool
+	Reason        string
+}
+
+type exitIPInfo struct {
+	IP            string
+	Location      string
+	IPType        string
+	RiskScore     float64
+	RiskLevel     string
+	IsResidential bool
 }
 
 // getExitIPInfo 通过代理获取出口 IP 和地理位置
-func getExitIPInfo(client *http.Client) (string, string) {
-	// 使用 ip-api.com 返回 JSON 格式的 IP 信息
-	resp, err := client.Get("http://ip-api.com/json/?fields=status,country,countryCode,city,query")
+func getExitIPInfo(client *http.Client) exitIPInfo {
+	ip, location, isProxy, isHosting, riskKnown := queryIPAPI(client)
+	ipinfoIP, ipinfoCountry, ipType, isResidential := queryIPInfo(client)
+
+	if ip == "" {
+		ip = ipinfoIP
+	}
+	if location == "" && ipinfoCountry != "" {
+		location = ipinfoCountry
+	}
+
+	riskScore, riskLevel := calculateRisk(isProxy, isHosting, riskKnown)
+	if isHosting {
+		ipType = "Datacenter"
+		isResidential = false
+	}
+
+	return exitIPInfo{
+		IP:            ip,
+		Location:      location,
+		IPType:        ipType,
+		RiskScore:     riskScore,
+		RiskLevel:     riskLevel,
+		IsResidential: isResidential,
+	}
+}
+
+// queryIPAPI 使用 ip-api.com 获取出口 IP、位置和风险基础信息
+func queryIPAPI(client *http.Client) (string, string, bool, bool, bool) {
+	resp, err := client.Get("http://ip-api.com/json/?fields=status,country,countryCode,city,query,proxy,hosting")
 	if err != nil {
-		return "", ""
+		return "", "", false, false, false
 	}
 	defer resp.Body.Close()
 
@@ -69,19 +110,87 @@ func getExitIPInfo(client *http.Client) (string, string) {
 		Country     string `json:"country"`
 		CountryCode string `json:"countryCode"`
 		City        string `json:"city"`
+		Proxy       bool   `json:"proxy"`
+		Hosting     bool   `json:"hosting"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Status != "success" {
-		return "", ""
+		return "", "", false, false, false
 	}
 
-	// 返回格式：IP, "国家代码 城市"
 	location := result.CountryCode
 	if result.City != "" {
 		location = fmt.Sprintf("%s %s", result.CountryCode, result.City)
 	}
 
-	return result.Query, location
+	return result.Query, location, result.Proxy, result.Hosting, true
+}
+
+// queryIPInfo 使用 ipinfo.io 获取更丰富的 ASN/公司类型信息，用于判断 IP 类型和住宅属性
+func queryIPInfo(client *http.Client) (string, string, string, bool) {
+	resp, err := client.Get("https://ipinfo.io/json")
+	if err != nil {
+		return "", "", "", false
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		IP      string `json:"ip"`
+		Country string `json:"country"`
+		Org     string `json:"org"`
+		Company struct {
+			Type string `json:"type"`
+		} `json:"company"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", "", false
+	}
+
+	if result.Company.Type != "" {
+		ipType := result.Company.Type
+		return result.IP, result.Country, ipType, strings.EqualFold(ipType, "isp")
+	}
+
+	if looksLikeDatacenterOrg(result.Org) {
+		return result.IP, result.Country, "Datacenter", false
+	}
+	if result.Org != "" {
+		return result.IP, result.Country, "ISP", true
+	}
+
+	return result.IP, result.Country, "", false
+}
+
+func calculateRisk(isProxy, isHosting, known bool) (float64, string) {
+	if !known {
+		return 0, "Unknown"
+	}
+	switch {
+	case isProxy && isHosting:
+		return 0.9, "Very High"
+	case isProxy:
+		return 0.7, "High"
+	case isHosting:
+		return 0.5, "Medium"
+	default:
+		return 0.1, "Low"
+	}
+}
+
+func looksLikeDatacenterOrg(org string) bool {
+	org = strings.ToLower(org)
+	keywords := []string{
+		"hosting", "cloud", "server", "data center", "datacenter", "vps",
+		"amazon", "google", "microsoft", "digitalocean", "linode", "vultr",
+		"hetzner", "ovh", "contabo", "alibaba", "tencent", "oracle",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(org, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 // HTTPS 测试目标列表，随机选一个验证代理的 CONNECT 隧道能力
@@ -152,8 +261,8 @@ func (v *Validator) ValidateStream(proxies []storage.Proxy) <-chan Result {
 			go func(px storage.Proxy) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				valid, latency, exitIP, exitLocation, reason := v.validateOneWithReason(px)
-				ch <- Result{Proxy: px, Valid: valid, Latency: latency, ExitIP: exitIP, ExitLocation: exitLocation, Reason: reason}
+				result := v.validateOneWithReason(px)
+				ch <- result
 			}(p)
 		}
 		wg.Wait()
@@ -165,11 +274,16 @@ func (v *Validator) ValidateStream(proxies []storage.Proxy) <-chan Result {
 
 // ValidateOne 验证单个代理是否可用，返回是否有效、延迟、出口IP和地理位置
 func (v *Validator) ValidateOne(p storage.Proxy) (bool, time.Duration, string, string) {
-	valid, latency, exitIP, exitLocation, _ := v.validateOneWithReason(p)
-	return valid, latency, exitIP, exitLocation
+	result := v.ValidateOneWithQuality(p)
+	return result.Valid, result.Latency, result.ExitIP, result.ExitLocation
 }
 
-func (v *Validator) validateOneWithReason(p storage.Proxy) (bool, time.Duration, string, string, string) {
+// ValidateOneWithQuality 验证单个代理并返回完整 IP 画像
+func (v *Validator) ValidateOneWithQuality(p storage.Proxy) Result {
+	return v.validateOneWithReason(p)
+}
+
+func (v *Validator) validateOneWithReason(p storage.Proxy) Result {
 	var client *http.Client
 	var err error
 
@@ -180,43 +294,54 @@ func (v *Validator) validateOneWithReason(p storage.Proxy) (bool, time.Duration,
 		client, err = newSOCKS5Client(p.Address, v.timeout)
 	default:
 		log.Printf("unknown protocol %s for %s", p.Protocol, p.Address)
-		return false, 0, "", "", "unknown_protocol"
+		return Result{Proxy: p, Valid: false, Reason: "unknown_protocol"}
 	}
 
 	if err != nil {
-		return false, 0, "", "", "client_init_failed"
+		return Result{Proxy: p, Valid: false, Reason: "client_init_failed"}
 	}
 
 	start := time.Now()
 	resp, err := client.Get(v.validateURL)
 	latency := time.Since(start)
 	if err != nil {
-		return false, 0, "", "", "connect_failed"
+		return Result{Proxy: p, Valid: false, Reason: "connect_failed"}
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	// 验证状态码（200 或 204 都接受）
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return false, latency, "", "", fmt.Sprintf("validate_status_%d", resp.StatusCode)
+		return Result{Proxy: p, Valid: false, Latency: latency, Reason: fmt.Sprintf("validate_status_%d", resp.StatusCode)}
 	}
 
 	// 响应时间过滤
 	if v.maxResponseMs > 0 && latency > time.Duration(v.maxResponseMs)*time.Millisecond {
-		return false, latency, "", "", "latency_exceeded"
+		return Result{Proxy: p, Valid: false, Latency: latency, Reason: "latency_exceeded"}
 	}
 
-	// 获取出口 IP 和地理位置（仅在验证通过时）
-	exitIP, exitLocation := getExitIPInfo(client)
+	// 获取出口 IP、地理位置和 IP 画像（仅在验证通过时）
+	exitInfo := getExitIPInfo(client)
 
 	// 必须能获取到出口信息
-	if exitIP == "" || exitLocation == "" {
-		return false, latency, exitIP, exitLocation, "exit_info_failed"
+	if exitInfo.IP == "" || exitInfo.Location == "" {
+		return Result{
+			Proxy:         p,
+			Valid:         false,
+			Latency:       latency,
+			ExitIP:        exitInfo.IP,
+			ExitLocation:  exitInfo.Location,
+			IPType:        exitInfo.IPType,
+			RiskScore:     exitInfo.RiskScore,
+			RiskLevel:     exitInfo.RiskLevel,
+			IsResidential: exitInfo.IsResidential,
+			Reason:        "exit_info_failed",
+		}
 	}
 
 	// 地理过滤：白名单优先，否则走黑名单
-	if v.cfg != nil && len(exitLocation) >= 2 {
-		countryCode := exitLocation[:2]
+	if v.cfg != nil && len(exitInfo.Location) >= 2 {
+		countryCode := exitInfo.Location[:2]
 		if len(v.cfg.AllowedCountries) > 0 {
 			// 白名单模式：不在白名单中则拒绝
 			allowed := false
@@ -227,13 +352,13 @@ func (v *Validator) validateOneWithReason(p storage.Proxy) (bool, time.Duration,
 				}
 			}
 			if !allowed {
-				return false, latency, exitIP, exitLocation, "geo_blocked"
+				return Result{Proxy: p, Valid: false, Latency: latency, ExitIP: exitInfo.IP, ExitLocation: exitInfo.Location, IPType: exitInfo.IPType, RiskScore: exitInfo.RiskScore, RiskLevel: exitInfo.RiskLevel, IsResidential: exitInfo.IsResidential, Reason: "geo_blocked"}
 			}
 		} else if len(v.cfg.BlockedCountries) > 0 {
 			// 黑名单模式
 			for _, blocked := range v.cfg.BlockedCountries {
 				if countryCode == blocked {
-					return false, latency, exitIP, exitLocation, "geo_blocked"
+					return Result{Proxy: p, Valid: false, Latency: latency, ExitIP: exitInfo.IP, ExitLocation: exitInfo.Location, IPType: exitInfo.IPType, RiskScore: exitInfo.RiskScore, RiskLevel: exitInfo.RiskLevel, IsResidential: exitInfo.IsResidential, Reason: "geo_blocked"}
 				}
 			}
 		}
@@ -242,11 +367,21 @@ func (v *Validator) validateOneWithReason(p storage.Proxy) (bool, time.Duration,
 	// HTTP 代理额外检测：必须支持 HTTPS CONNECT 隧道
 	if p.Protocol == "http" {
 		if !checkHTTPSConnect(p.Address, v.timeout) {
-			return false, latency, exitIP, exitLocation, "https_connect_failed"
+			return Result{Proxy: p, Valid: false, Latency: latency, ExitIP: exitInfo.IP, ExitLocation: exitInfo.Location, IPType: exitInfo.IPType, RiskScore: exitInfo.RiskScore, RiskLevel: exitInfo.RiskLevel, IsResidential: exitInfo.IsResidential, Reason: "https_connect_failed"}
 		}
 	}
 
-	return true, latency, exitIP, exitLocation, ""
+	return Result{
+		Proxy:         p,
+		Valid:         true,
+		Latency:       latency,
+		ExitIP:        exitInfo.IP,
+		ExitLocation:  exitInfo.Location,
+		IPType:        exitInfo.IPType,
+		RiskScore:     exitInfo.RiskScore,
+		RiskLevel:     exitInfo.RiskLevel,
+		IsResidential: exitInfo.IsResidential,
+	}
 }
 
 func newHTTPClient(address string, timeout time.Duration) (*http.Client, error) {

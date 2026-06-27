@@ -12,22 +12,26 @@ import (
 )
 
 type Proxy struct {
-	ID           int64     `json:"id"`
-	Address      string    `json:"address"`
-	Protocol     string    `json:"protocol"`
-	ExitIP       string    `json:"exit_ip"`
-	ExitLocation string    `json:"exit_location"`
-	Latency      int       `json:"latency"`
-	QualityGrade string    `json:"quality_grade"`
-	UseCount     int       `json:"use_count"`
-	SuccessCount int       `json:"success_count"`
-	FailCount    int       `json:"fail_count"`
-	LastUsed     time.Time `json:"last_used"`
-	LastCheck    time.Time `json:"last_check"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID             int64     `json:"id"`
+	Address        string    `json:"address"`
+	Protocol       string    `json:"protocol"`
+	ExitIP         string    `json:"exit_ip"`
+	ExitLocation   string    `json:"exit_location"`
+	IPType         string    `json:"ip_type"`
+	RiskScore      float64   `json:"risk_score"`
+	RiskLevel      string    `json:"risk_level"`
+	IsResidential  bool      `json:"is_residential"`
+	Latency        int       `json:"latency"`
+	QualityGrade   string    `json:"quality_grade"`
+	UseCount       int       `json:"use_count"`
+	SuccessCount   int       `json:"success_count"`
+	FailCount      int       `json:"fail_count"`
+	LastUsed       time.Time `json:"last_used"`
+	LastCheck      time.Time `json:"last_check"`
+	CreatedAt      time.Time `json:"created_at"`
 	Status         string    `json:"status"`
 	Source         string    `json:"source"`          // "free" 或 "custom"
-	SubscriptionID int64    `json:"subscription_id"` // 所属订阅ID（0=免费代理）
+	SubscriptionID int64     `json:"subscription_id"` // 所属订阅ID（0=免费代理）
 }
 
 // Subscription 订阅信息
@@ -55,7 +59,7 @@ type SourceStatus struct {
 	ConsecutiveFails int
 	LastSuccess      time.Time
 	LastFail         time.Time
-	Status           string    // active/degraded/disabled
+	Status           string // active/degraded/disabled
 	DisabledUntil    time.Time
 }
 
@@ -87,6 +91,10 @@ func (s *Storage) initSchema() error {
 			protocol       TEXT NOT NULL,
 			exit_ip        TEXT NOT NULL DEFAULT '',
 			exit_location  TEXT NOT NULL DEFAULT '',
+			ip_type        TEXT NOT NULL DEFAULT '',
+			risk_score     REAL NOT NULL DEFAULT 0,
+			risk_level     TEXT NOT NULL DEFAULT 'Unknown',
+			is_residential INTEGER NOT NULL DEFAULT 0,
 			latency        INTEGER NOT NULL DEFAULT 0,
 			quality_grade  TEXT NOT NULL DEFAULT 'C',
 			use_count      INTEGER NOT NULL DEFAULT 0,
@@ -155,6 +163,20 @@ func (s *Storage) initSchema() error {
 		if err != nil {
 			return fmt.Errorf("migrate exit_location column: %w", err)
 		}
+	}
+
+	// 迁移：添加 IP 画像字段
+	if err := s.addProxyColumnIfMissing("ip_type", `ALTER TABLE proxies ADD COLUMN ip_type TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.addProxyColumnIfMissing("risk_score", `ALTER TABLE proxies ADD COLUMN risk_score REAL NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := s.addProxyColumnIfMissing("risk_level", `ALTER TABLE proxies ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'Unknown'`); err != nil {
+		return err
+	}
+	if err := s.addProxyColumnIfMissing("is_residential", `ALTER TABLE proxies ADD COLUMN is_residential INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
 	}
 
 	// 迁移：添加 latency 字段
@@ -242,6 +264,18 @@ func (s *Storage) initSchema() error {
 	return nil
 }
 
+func (s *Storage) addProxyColumnIfMissing(name, statement string) error {
+	var exists int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('proxies') WHERE name = ?`, name).Scan(&exists)
+	if err == nil && exists == 0 {
+		log.Printf("[storage] migrating: adding %s column", name)
+		if _, err := s.db.Exec(statement); err != nil {
+			return fmt.Errorf("migrate %s column: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // AddProxy 新增免费代理，已存在则忽略
 func (s *Storage) AddProxy(address, protocol string) error {
 	result, err := s.db.Exec(
@@ -252,7 +286,7 @@ func (s *Storage) AddProxy(address, protocol string) error {
 		log.Printf("[storage] AddProxy %s error: %v", address, err)
 		return err
 	}
-	
+
 	// 检查是否真的插入了
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
@@ -285,7 +319,7 @@ func (s *Storage) AddProxies(proxies []Proxy) error {
 // GetRandom 随机取一个可用代理（优先选择质量高的）
 func (s *Storage) GetRandom() (*Proxy, error) {
 	rows, err := s.db.Query(
-		`SELECT `+proxyColumns+`
+		`SELECT ` + proxyColumns + `
 		 FROM proxies
 		 WHERE status = 'active' AND fail_count < 3
 		 ORDER BY
@@ -310,7 +344,7 @@ func (s *Storage) GetRandom() (*Proxy, error) {
 }
 
 // proxyColumns 代理表查询的标准列列表
-const proxyColumns = `id, address, protocol, exit_ip, exit_location, latency, quality_grade,
+const proxyColumns = `id, address, protocol, exit_ip, exit_location, ip_type, risk_score, risk_level, is_residential, latency, quality_grade,
 	use_count, success_count, fail_count, last_used, last_check, created_at, status, source, subscription_id`
 
 // scanProxy 扫描代理行数据
@@ -319,11 +353,13 @@ func scanProxy(rows *sql.Rows) (*Proxy, error) {
 	var lastUsed, lastCheck sql.NullTime
 	var source sql.NullString
 	var subID sql.NullInt64
+	var isResidential int
 	if err := rows.Scan(&p.ID, &p.Address, &p.Protocol, &p.ExitIP, &p.ExitLocation,
-		&p.Latency, &p.QualityGrade, &p.UseCount, &p.SuccessCount, &p.FailCount,
+		&p.IPType, &p.RiskScore, &p.RiskLevel, &isResidential, &p.Latency, &p.QualityGrade, &p.UseCount, &p.SuccessCount, &p.FailCount,
 		&lastUsed, &lastCheck, &p.CreatedAt, &p.Status, &source, &subID); err != nil {
 		return nil, err
 	}
+	p.IsResidential = isResidential != 0
 	if lastUsed.Valid {
 		p.LastUsed = lastUsed.Time
 	}
@@ -540,6 +576,23 @@ func (s *Storage) UpdateExitInfo(address, exitIP, exitLocation string, latencyMs
 	return err
 }
 
+// UpdateExitInfoWithQuality 更新代理的出口 IP、位置、IP 画像和质量等级
+func (s *Storage) UpdateExitInfoWithQuality(address, exitIP, exitLocation, ipType string, riskScore float64, riskLevel string, isResidential bool, latencyMs int) error {
+	grade := CalculateQualityGrade(latencyMs)
+	if riskLevel == "" {
+		riskLevel = "Unknown"
+	}
+	residential := 0
+	if isResidential {
+		residential = 1
+	}
+	_, err := s.db.Exec(
+		`UPDATE proxies SET exit_ip = ?, exit_location = ?, ip_type = ?, risk_score = ?, risk_level = ?, is_residential = ?, latency = ?, quality_grade = ? WHERE address = ?`,
+		exitIP, exitLocation, ipType, riskScore, riskLevel, residential, latencyMs, grade, address,
+	)
+	return err
+}
+
 // RecordProxyUse 记录代理使用（成功）
 func (s *Storage) RecordProxyUse(address string, success bool) error {
 	if success {
@@ -606,15 +659,22 @@ func (s *Storage) ReplaceProxy(oldAddress string, newProxy Proxy) error {
 		source = "free"
 	}
 	_, err = tx.Exec(
-		`INSERT INTO proxies (address, protocol, exit_ip, exit_location, latency, quality_grade, status, source)
-		 VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
-		newProxy.Address, newProxy.Protocol, newProxy.ExitIP, newProxy.ExitLocation, newProxy.Latency, grade, source,
+		`INSERT INTO proxies (address, protocol, exit_ip, exit_location, ip_type, risk_score, risk_level, is_residential, latency, quality_grade, status, source)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+		newProxy.Address, newProxy.Protocol, newProxy.ExitIP, newProxy.ExitLocation, newProxy.IPType, newProxy.RiskScore, newProxy.RiskLevel, boolToInt(newProxy.IsResidential), newProxy.Latency, grade, source,
 	)
 	if err != nil {
 		return err
 	}
 
 	return tx.Commit()
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // MarkAsReplacementCandidate 标记代理为替换候选
@@ -933,7 +993,7 @@ func (s *Storage) EnableProxy(address string) error {
 // GetDisabledCustomProxies 获取所有被禁用的订阅代理
 func (s *Storage) GetDisabledCustomProxies() ([]Proxy, error) {
 	rows, err := s.db.Query(
-		`SELECT `+proxyColumns+`
+		`SELECT ` + proxyColumns + `
 		 FROM proxies
 		 WHERE source = 'custom' AND status = 'disabled'`,
 	)
@@ -1096,7 +1156,7 @@ func (s *Storage) GetSubscriptions() ([]Subscription, error) {
 // GetSubscription 获取单个订阅
 func (s *Storage) GetSubscription(id int64) (*Subscription, error) {
 	rows, err := s.db.Query(
-		`SELECT ` + subColumns + `
+		`SELECT `+subColumns+`
 		 FROM subscriptions WHERE id = ?`, id,
 	)
 	if err != nil {

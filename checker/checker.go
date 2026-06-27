@@ -56,7 +56,7 @@ func (c *Checker) run() {
 			latencyMs := int(r.Latency.Milliseconds())
 			if r.ExitIP != "" && r.Proxy.ExitIP == "" {
 				// 如果之前没有出口 IP 信息，更新完整信息
-				if err := c.storage.UpdateExitInfo(r.Proxy.Address, r.ExitIP, r.ExitLocation, latencyMs); err != nil {
+				if err := c.storage.UpdateExitInfoWithQuality(r.Proxy.Address, r.ExitIP, r.ExitLocation, r.IPType, r.RiskScore, r.RiskLevel, r.IsResidential, latencyMs); err != nil {
 					log.Printf("[checker] update exit info error: %v", err)
 				}
 			} else if r.Latency > 0 {

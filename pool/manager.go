@@ -145,7 +145,7 @@ func (m *Manager) TryAddProxy(p storage.Proxy) (bool, string) {
 		if err := m.storage.AddProxyWithSource(p.Address, p.Protocol, "custom"); err != nil {
 			return false, "db_error"
 		}
-		m.storage.UpdateExitInfo(p.Address, p.ExitIP, p.ExitLocation, p.Latency)
+		m.storage.UpdateExitInfoWithQuality(p.Address, p.ExitIP, p.ExitLocation, p.IPType, p.RiskScore, p.RiskLevel, p.IsResidential, p.Latency)
 		log.Printf("[pool] ✅ 订阅代理入池: %s (%s) %dms %s", p.Address, p.Protocol, p.Latency, p.ExitLocation)
 		return true, "added_custom"
 	}
@@ -171,7 +171,7 @@ func (m *Manager) TryAddProxy(p storage.Proxy) (bool, string) {
 			return false, "db_error"
 		}
 		// 更新完整信息
-		m.storage.UpdateExitInfo(p.Address, p.ExitIP, p.ExitLocation, p.Latency)
+		m.storage.UpdateExitInfoWithQuality(p.Address, p.ExitIP, p.ExitLocation, p.IPType, p.RiskScore, p.RiskLevel, p.IsResidential, p.Latency)
 		log.Printf("[pool] ✅ 直接入池: %s (%s %d/%d) %dms %s %s",
 			p.Address, p.Protocol, currentCount+1, maxSlots, p.Latency, p.ExitIP, p.ExitLocation)
 		return true, "added"
@@ -183,7 +183,7 @@ func (m *Manager) TryAddProxy(p storage.Proxy) (bool, string) {
 		if err := m.storage.AddProxy(p.Address, p.Protocol); err != nil {
 			return false, "db_error"
 		}
-		m.storage.UpdateExitInfo(p.Address, p.ExitIP, p.ExitLocation, p.Latency)
+		m.storage.UpdateExitInfoWithQuality(p.Address, p.ExitIP, p.ExitLocation, p.IPType, p.RiskScore, p.RiskLevel, p.IsResidential, p.Latency)
 		log.Printf("[pool] ✅ 浮动入池: %s (%s %d/%d+%d) %dms",
 			p.Address, p.Protocol, currentCount+1, maxSlots, allowedFloat, p.Latency)
 		return true, "added_float"

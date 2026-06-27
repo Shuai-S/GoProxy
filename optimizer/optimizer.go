@@ -66,11 +66,15 @@ func (o *Optimizer) RunOnce() {
 			// 只保留延迟在健康标准内的
 			if latencyMs <= o.cfg.MaxLatencyHealthy {
 				validCandidates = append(validCandidates, storage.Proxy{
-					Address:      result.Proxy.Address,
-					Protocol:     result.Proxy.Protocol,
-					ExitIP:       result.ExitIP,
-					ExitLocation: result.ExitLocation,
-					Latency:      latencyMs,
+					Address:       result.Proxy.Address,
+					Protocol:      result.Proxy.Protocol,
+					ExitIP:        result.ExitIP,
+					ExitLocation:  result.ExitLocation,
+					IPType:        result.IPType,
+					RiskScore:     result.RiskScore,
+					RiskLevel:     result.RiskLevel,
+					IsResidential: result.IsResidential,
+					Latency:       latencyMs,
 				})
 			}
 		}

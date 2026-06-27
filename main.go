@@ -57,7 +57,7 @@ func main() {
 	poolMgr := pool.NewManager(store, cfg)
 	healthChecker := checker.NewHealthChecker(store, validate, cfg, poolMgr)
 	opt := optimizer.NewOptimizer(store, fetch, validate, poolMgr, cfg)
-	
+
 	// 清理无效代理（免费代理删除，订阅代理禁用）
 	totalDeleted := 0
 	if len(cfg.AllowedCountries) > 0 {
@@ -81,11 +81,11 @@ func main() {
 		log.Printf("[main] 🧹 已清理 %d 个无出口信息的代理", deleted)
 		totalDeleted += int(deleted)
 	}
-	
+
 	// 创建 HTTP 代理服务器：随机轮换 + 最低延迟
 	randomServer := proxy.New(store, cfg, "random", cfg.ProxyPort)
 	stableServer := proxy.New(store, cfg, "lowest-latency", cfg.StableProxyPort)
-	
+
 	// 创建 SOCKS5 代理服务器：随机轮换 + 最低延迟
 	socks5RandomServer := proxy.NewSOCKS5(store, cfg, "random", cfg.SOCKS5Port)
 	socks5StableServer := proxy.NewSOCKS5(store, cfg, "lowest-latency", cfg.StableSOCKS5Port)
@@ -234,11 +234,15 @@ func smartFetchAndFill(fetch *fetcher.Fetcher, validate *validator.Validator, st
 		}
 
 		proxyToAdd := storage.Proxy{
-			Address:      result.Proxy.Address,
-			Protocol:     result.Proxy.Protocol,
-			ExitIP:       result.ExitIP,
-			ExitLocation: result.ExitLocation,
-			Latency:      latencyMs,
+			Address:       result.Proxy.Address,
+			Protocol:      result.Proxy.Protocol,
+			ExitIP:        result.ExitIP,
+			ExitLocation:  result.ExitLocation,
+			IPType:        result.IPType,
+			RiskScore:     result.RiskScore,
+			RiskLevel:     result.RiskLevel,
+			IsResidential: result.IsResidential,
+			Latency:       latencyMs,
 		}
 
 		if added, reason := poolMgr.TryAddProxy(proxyToAdd); added {
