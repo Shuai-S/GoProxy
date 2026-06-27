@@ -124,18 +124,35 @@ body::after{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backgr
 /* 操作按钮样式 */
 .btn-danger{border:1px solid var(--red);color:var(--red);padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;background:var(--bg-card);cursor:pointer;transition:all 0.2s}
 .btn-danger:hover{background:var(--red);color:#000;box-shadow:0 0 10px var(--red)}
-.btn-action{border:1px solid var(--border);color:var(--fg-dim);padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;background:var(--bg-card);margin-left:6px;cursor:pointer;transition:all 0.2s}
+.btn-action{border:1px solid var(--border);color:var(--fg-dim);padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;background:var(--bg-card);cursor:pointer;transition:all 0.2s}
 .btn-action:hover{background:var(--border);color:var(--fg);box-shadow:0 0 8px var(--border)}
 
 /* Table */
-table{width:100%;border-collapse:collapse;font-size:11px;font-family:var(--mono);border:1px solid var(--border);background:var(--bg-card)}
+table{width:100%;min-width:1260px;border-collapse:collapse;font-size:11px;font-family:var(--mono);border:1px solid var(--border);background:var(--bg-card);table-layout:fixed}
 thead{position:sticky;top:78px;z-index:50;border-bottom:1px solid var(--border-heavy);background:var(--bg-elevated);box-shadow:0 2px 8px rgba(0,0,0,0.3)}
-th{padding:10px 12px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--fg-dim);font-weight:600}
-td{padding:12px;border-bottom:1px solid var(--border);color:var(--fg-dim)}
+thead tr{height:54px}
+th{height:54px;padding:8px 12px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg-dim);font-weight:600;line-height:1.35;vertical-align:middle;white-space:normal;word-break:keep-all;overflow-wrap:normal}
+td{height:78px;padding:12px;border-bottom:1px solid var(--border);color:var(--fg-dim);vertical-align:middle}
 tr:last-child td{border-bottom:none}
 tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
 .cell-mono{font-family:var(--mono);font-size:10px}
 .cell-grade{font-weight:700;font-size:14px}
+.cell-protocol{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.subscription-badge{display:inline-block;background:var(--yellow);color:#000;font-size:8px;font-weight:700;padding:1px 5px;letter-spacing:0.05em;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell-action{width:80px}
+.action-stack{display:flex;flex-direction:column;align-items:stretch;gap:6px;width:58px;margin:0 auto}
+.action-stack button{width:58px;height:30px;padding:0;text-align:center}
+.th-grade{width:48px}
+.th-protocol{width:138px}
+.th-address{width:180px}
+.th-exit-ip{width:140px}
+.th-location{width:190px}
+.th-ip-type{width:118px}
+.th-risk{width:128px}
+.th-residential{width:78px}
+.th-latency{width:78px}
+.th-usage{width:84px}
+.th-action{width:86px}
 .cell-clickable{cursor:pointer;transition:all 0.2s}
 .cell-clickable:hover{background:var(--border)!important;color:var(--fg)!important;box-shadow:0 0 8px var(--border)!important}
 .cell-clickable:active{background:var(--border-heavy)!important}
@@ -1240,18 +1257,18 @@ function renderProxies(proxies) {
     html = '<div class="empty" data-i18n="proxy.empty">' + t('proxy.empty') + '</div>';
   } else {
     html = '<table><thead><tr>';
-    html += '<th data-i18n="proxy.th_grade">' + t('proxy.th_grade') + '</th>';
-    html += '<th data-i18n="proxy.th_protocol">' + t('proxy.th_protocol') + '</th>';
-    html += '<th data-i18n="proxy.th_address">' + t('proxy.th_address') + '</th>';
-    html += '<th data-i18n="proxy.th_exit_ip">' + t('proxy.th_exit_ip') + '</th>';
-    html += '<th data-i18n="proxy.th_location">' + t('proxy.th_location') + '</th>';
-    html += '<th data-i18n="proxy.th_ip_type">' + t('proxy.th_ip_type') + '</th>';
-    html += '<th data-i18n="proxy.th_risk">' + t('proxy.th_risk') + '</th>';
-    html += '<th data-i18n="proxy.th_residential">' + t('proxy.th_residential') + '</th>';
-    html += '<th data-i18n="proxy.th_latency">' + t('proxy.th_latency') + '</th>';
-    html += '<th data-i18n="proxy.th_usage">' + t('proxy.th_usage') + '</th>';
+    html += '<th class="th-grade" data-i18n="proxy.th_grade">' + t('proxy.th_grade') + '</th>';
+    html += '<th class="th-protocol" data-i18n="proxy.th_protocol">' + t('proxy.th_protocol') + '</th>';
+    html += '<th class="th-address" data-i18n="proxy.th_address">' + t('proxy.th_address') + '</th>';
+    html += '<th class="th-exit-ip" data-i18n="proxy.th_exit_ip">' + t('proxy.th_exit_ip') + '</th>';
+    html += '<th class="th-location" data-i18n="proxy.th_location">' + t('proxy.th_location') + '</th>';
+    html += '<th class="th-ip-type" data-i18n="proxy.th_ip_type">' + t('proxy.th_ip_type') + '</th>';
+    html += '<th class="th-risk" data-i18n="proxy.th_risk">' + t('proxy.th_risk') + '</th>';
+    html += '<th class="th-residential" data-i18n="proxy.th_residential">' + t('proxy.th_residential') + '</th>';
+    html += '<th class="th-latency" data-i18n="proxy.th_latency">' + t('proxy.th_latency') + '</th>';
+    html += '<th class="th-usage" data-i18n="proxy.th_usage">' + t('proxy.th_usage') + '</th>';
     if (isAdmin) {
-      html += '<th data-i18n="proxy.th_action">' + t('proxy.th_action') + '</th>';
+      html += '<th class="th-action" data-i18n="proxy.th_action">' + t('proxy.th_action') + '</th>';
     }
     html += '</tr></thead><tbody>';
 
@@ -1263,12 +1280,12 @@ function renderProxies(proxies) {
       const rowStyle = p.source === 'custom' ? ' style="border-left:2px solid var(--yellow)"' : '';
       html += '<tr' + rowStyle + '>';
       html += '<td class="cell-grade grade-' + grade + '">' + (p.quality_grade || 'C') + '</td>';
-      html += '<td><span class="badge badge-' + p.protocol + '">' + p.protocol.toUpperCase() + '</span>';
+      html += '<td><div class="cell-protocol"><span class="badge badge-' + p.protocol + '">' + p.protocol.toUpperCase() + '</span>';
       if (p.source === 'custom') {
         const subName = subNameMap[p.subscription_id] || t('sub.add_title');
-        html += ' <span style="display:inline-block;background:var(--yellow);color:#000;font-size:8px;font-weight:700;padding:1px 4px;margin-left:4px;letter-spacing:0.05em">' + subName + '</span>';
+        html += '<span class="subscription-badge" title="' + esc(subName) + '">' + esc(subName) + '</span>';
       }
-      html += '</td>';
+      html += '</div></td>';
       html += '<td class="cell-mono cell-clickable" onclick="copyToClipboard(\'' + jsString(p.address) + '\')" title="Copy">' + esc(p.address) + '</td>';
       html += '<td class="cell-mono">' + (p.exit_ip ? esc(p.exit_ip) : '—') + '</td>';
       html += '<td>' + flag + ' ' + (p.exit_location ? esc(p.exit_location) : '—') + '</td>';
@@ -1279,10 +1296,10 @@ function renderProxies(proxies) {
       html += '<td class="cell-mono">' + (p.use_count || 0) + ' / ' + (p.success_count || 0) + '</td>';
       
       if (isAdmin) {
-        html += '<td>';
+        html += '<td class="cell-action"><div class="action-stack">';
         html += '<button class="btn-action" onclick="refreshProxy(\'' + jsString(p.address) + '\')" data-i18n="proxy.btn_refresh">' + t('proxy.btn_refresh') + '</button>';
         html += '<button class="btn-danger" onclick="deleteProxy(\'' + jsString(p.address) + '\')" data-i18n="proxy.btn_delete">' + t('proxy.btn_delete') + '</button>';
-        html += '</td>';
+        html += '</div></td>';
       }
       
       html += '</tr>';
