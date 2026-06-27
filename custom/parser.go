@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -122,7 +123,8 @@ func looksLikeProxyLinks(s string) bool {
 		strings.Contains(s, "ssr://") ||
 		strings.Contains(s, "hysteria2://") ||
 		strings.Contains(s, "hy2://") ||
-		strings.Contains(s, "tuic://")
+		strings.Contains(s, "tuic://") ||
+		strings.Contains(s, "anytls://")
 }
 
 // clashConfig Clash YAML 配置结构（兼容新旧格式）
@@ -178,16 +180,24 @@ func parseClash(data []byte) ([]ParsedNode, error) {
 	}
 
 	var nodes []ParsedNode
+	skipped := 0
+	skipReasons := make(map[string]int)
 	for _, proxy := range proxies {
 		node, err := parseClashProxy(proxy)
 		if err != nil {
+			skipped++
+			skipReasons[err.Error()]++
 			log.Printf("[custom] 跳过无效节点: %v", err)
 			continue
 		}
 		nodes = append(nodes, *node)
 	}
 
-	log.Printf("[custom] Clash YAML 解析完成，共 %d 个节点", len(nodes))
+	log.Printf("[custom] Clash YAML 解析完成: 原始=%d，有效=%d，跳过=%d，协议分布=%s",
+		len(proxies), len(nodes), skipped, nodeTypeSummary(nodes))
+	if skipped > 0 {
+		log.Printf("[custom] Clash YAML 跳过原因: %s", stringCountSummary(skipReasons))
+	}
 	return nodes, nil
 }
 
@@ -358,12 +368,14 @@ func parseBase64(data []byte) ([]ParsedNode, error) {
 func parsePlain(data []byte) ([]ParsedNode, error) {
 	lines := strings.Split(string(data), "\n")
 	var nodes []ParsedNode
+	nonEmpty, skipped := 0, 0
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		nonEmpty++
 
 		protocol := "http"
 		addr := line
@@ -385,10 +397,12 @@ func parsePlain(data []byte) ([]ParsedNode, error) {
 
 		host, portStr, err := net.SplitHostPort(addr)
 		if err != nil {
+			skipped++
 			continue
 		}
 		port, err := strconv.Atoi(portStr)
 		if err != nil {
+			skipped++
 			continue
 		}
 
@@ -401,7 +415,8 @@ func parsePlain(data []byte) ([]ParsedNode, error) {
 		})
 	}
 
-	log.Printf("[custom] 纯文本解析完成，共 %d 个节点", len(nodes))
+	log.Printf("[custom] 纯文本解析完成: 原始行=%d，有效=%d，跳过=%d，协议分布=%s",
+		nonEmpty, len(nodes), skipped, nodeTypeSummary(nodes))
 	return nodes, nil
 }
 
@@ -409,21 +424,38 @@ func parsePlain(data []byte) ([]ParsedNode, error) {
 func parseProxyLinks(content string) ([]ParsedNode, error) {
 	lines := strings.Split(content, "\n")
 	var nodes []ParsedNode
+	nonEmpty, skipped := 0, 0
+	skipReasons := make(map[string]int)
+	unsupportedProtocols := make(map[string]int)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		nonEmpty++
 
 		node, err := parseProxyLink(line)
 		if err != nil {
+			skipped++
+			reason := safeParseError(err)
+			skipReasons[reason]++
+			if reason == "不支持的协议链接" {
+				unsupportedProtocols[protocolFromLink(line)]++
+			}
 			continue
 		}
 		nodes = append(nodes, *node)
 	}
 
-	log.Printf("[custom] 协议链接解析完成，共 %d 个节点", len(nodes))
+	log.Printf("[custom] 协议链接解析完成: 原始行=%d，有效=%d，跳过=%d，协议分布=%s",
+		nonEmpty, len(nodes), skipped, nodeTypeSummary(nodes))
+	if skipped > 0 {
+		log.Printf("[custom] 协议链接跳过原因: %s", stringCountSummary(skipReasons))
+		if len(unsupportedProtocols) > 0 {
+			log.Printf("[custom] 协议链接不支持的类型: %s", stringCountSummary(unsupportedProtocols))
+		}
+	}
 	return nodes, nil
 }
 
@@ -444,6 +476,8 @@ func parseProxyLink(link string) (*ParsedNode, error) {
 		return parseStandardLink(link, "hysteria2")
 	case strings.HasPrefix(link, "tuic://"):
 		return parseStandardLink(link, "tuic")
+	case strings.HasPrefix(link, "anytls://"):
+		return parseStandardLink(link, "anytls")
 	default:
 		return nil, fmt.Errorf("不支持的协议链接: %s", link[:min(20, len(link))])
 	}
@@ -547,7 +581,7 @@ func parseStandardLink(link string, typ string) (*ParsedNode, error) {
 	// 用户信息（password/uuid）
 	if u.User != nil {
 		password := u.User.Username()
-		if typ == "trojan" || typ == "hysteria2" {
+		if typ == "trojan" || typ == "hysteria2" || typ == "anytls" {
 			raw["password"] = password
 		} else if typ == "vless" || typ == "tuic" {
 			raw["uuid"] = password
@@ -565,7 +599,8 @@ func parseStandardLink(link string, typ string) (*ParsedNode, error) {
 	if security == "" {
 		security = params.Get("type") // 有些链接用 type 表示
 	}
-	if security != "none" && security != "" || typ == "trojan" || typ == "hysteria2" {
+	requiresTLS := typ == "trojan" || typ == "hysteria2" || typ == "tuic" || typ == "anytls"
+	if security != "none" && security != "" || requiresTLS {
 		raw["tls"] = true
 		if sni := params.Get("sni"); sni != "" {
 			raw["sni"] = sni
@@ -744,4 +779,49 @@ func firstQueryValue(values url.Values, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func nodeTypeSummary(nodes []ParsedNode) string {
+	counts := make(map[string]int)
+	for _, node := range nodes {
+		typ := node.Type
+		if typ == "" {
+			typ = "unknown"
+		}
+		counts[typ]++
+	}
+	return stringCountSummary(counts)
+}
+
+func stringCountSummary(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "无"
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func safeParseError(err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "不支持的协议链接") {
+		return "不支持的协议链接"
+	}
+	return msg
+}
+
+func protocolFromLink(link string) string {
+	link = strings.TrimSpace(strings.ToLower(link))
+	if idx := strings.Index(link, "://"); idx > 0 {
+		return link[:idx]
+	}
+	return "unknown"
 }

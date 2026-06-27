@@ -277,7 +277,8 @@ func buildOutbound(node ParsedNode, tag string) map[string]interface{} {
 		out["uuid"] = getStr(raw, "uuid")
 		out["password"] = getStr(raw, "password")
 		out["congestion_control"] = getStrDefault(raw, "congestion-controller", "bbr")
-		applyTLS(raw, out)
+		// tuic 强制启用 TLS
+		forceTLS(raw, out)
 
 	case "anytls":
 		out["type"] = "anytls"

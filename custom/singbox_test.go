@@ -31,3 +31,41 @@ func TestBuildOutboundHysteria2Obfs(t *testing.T) {
 		t.Fatalf("expected obfs password, got %#v", obfs["password"])
 	}
 }
+
+func TestParseAnyTLSLink(t *testing.T) {
+	node, err := parseProxyLink("anytls://secret@example.com:443?sni=example.com#any")
+	if err != nil {
+		t.Fatalf("parse anytls link: %v", err)
+	}
+	if node.Type != "anytls" {
+		t.Fatalf("expected anytls type, got %s", node.Type)
+	}
+	if node.Raw["password"] != "secret" {
+		t.Fatalf("expected anytls password, got %#v", node.Raw["password"])
+	}
+}
+
+func TestBuildOutboundTUICForcesTLS(t *testing.T) {
+	node := ParsedNode{
+		Name:   "tuic",
+		Type:   "tuic",
+		Server: "example.com",
+		Port:   443,
+		Raw: map[string]interface{}{
+			"type":     "tuic",
+			"server":   "example.com",
+			"port":     443,
+			"uuid":     "00000000-0000-0000-0000-000000000000",
+			"password": "secret",
+		},
+	}
+
+	outbound := buildOutbound(node, "node-0")
+	tlsConfig, ok := outbound["tls"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected tuic tls config, got %#v", outbound["tls"])
+	}
+	if tlsConfig["enabled"] != true {
+		t.Fatalf("expected tuic tls enabled, got %#v", tlsConfig["enabled"])
+	}
+}

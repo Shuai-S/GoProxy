@@ -51,6 +51,7 @@ type Result struct {
 	Latency      time.Duration
 	ExitIP       string
 	ExitLocation string
+	Reason       string
 }
 
 // getExitIPInfo 通过代理获取出口 IP 和地理位置
@@ -64,7 +65,7 @@ func getExitIPInfo(client *http.Client) (string, string) {
 
 	var result struct {
 		Status      string `json:"status"`
-		Query       string `json:"query"`       // IP 地址
+		Query       string `json:"query"` // IP 地址
 		Country     string `json:"country"`
 		CountryCode string `json:"countryCode"`
 		City        string `json:"city"`
@@ -79,7 +80,7 @@ func getExitIPInfo(client *http.Client) (string, string) {
 	if result.City != "" {
 		location = fmt.Sprintf("%s %s", result.CountryCode, result.City)
 	}
-	
+
 	return result.Query, location
 }
 
@@ -151,8 +152,8 @@ func (v *Validator) ValidateStream(proxies []storage.Proxy) <-chan Result {
 			go func(px storage.Proxy) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				valid, latency, exitIP, exitLocation := v.ValidateOne(px)
-				ch <- Result{Proxy: px, Valid: valid, Latency: latency, ExitIP: exitIP, ExitLocation: exitLocation}
+				valid, latency, exitIP, exitLocation, reason := v.validateOneWithReason(px)
+				ch <- Result{Proxy: px, Valid: valid, Latency: latency, ExitIP: exitIP, ExitLocation: exitLocation, Reason: reason}
 			}(p)
 		}
 		wg.Wait()
@@ -164,6 +165,11 @@ func (v *Validator) ValidateStream(proxies []storage.Proxy) <-chan Result {
 
 // ValidateOne 验证单个代理是否可用，返回是否有效、延迟、出口IP和地理位置
 func (v *Validator) ValidateOne(p storage.Proxy) (bool, time.Duration, string, string) {
+	valid, latency, exitIP, exitLocation, _ := v.validateOneWithReason(p)
+	return valid, latency, exitIP, exitLocation
+}
+
+func (v *Validator) validateOneWithReason(p storage.Proxy) (bool, time.Duration, string, string, string) {
 	var client *http.Client
 	var err error
 
@@ -174,40 +180,40 @@ func (v *Validator) ValidateOne(p storage.Proxy) (bool, time.Duration, string, s
 		client, err = newSOCKS5Client(p.Address, v.timeout)
 	default:
 		log.Printf("unknown protocol %s for %s", p.Protocol, p.Address)
-		return false, 0, "", ""
+		return false, 0, "", "", "unknown_protocol"
 	}
 
 	if err != nil {
-		return false, 0, "", ""
+		return false, 0, "", "", "client_init_failed"
 	}
 
 	start := time.Now()
 	resp, err := client.Get(v.validateURL)
 	latency := time.Since(start)
 	if err != nil {
-		return false, 0, "", ""
+		return false, 0, "", "", "connect_failed"
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	// 验证状态码（200 或 204 都接受）
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return false, latency, "", ""
+		return false, latency, "", "", fmt.Sprintf("validate_status_%d", resp.StatusCode)
 	}
 
 	// 响应时间过滤
 	if v.maxResponseMs > 0 && latency > time.Duration(v.maxResponseMs)*time.Millisecond {
-		return false, latency, "", ""
+		return false, latency, "", "", "latency_exceeded"
 	}
 
 	// 获取出口 IP 和地理位置（仅在验证通过时）
 	exitIP, exitLocation := getExitIPInfo(client)
-	
+
 	// 必须能获取到出口信息
 	if exitIP == "" || exitLocation == "" {
-		return false, latency, exitIP, exitLocation
+		return false, latency, exitIP, exitLocation, "exit_info_failed"
 	}
-	
+
 	// 地理过滤：白名单优先，否则走黑名单
 	if v.cfg != nil && len(exitLocation) >= 2 {
 		countryCode := exitLocation[:2]
@@ -221,13 +227,13 @@ func (v *Validator) ValidateOne(p storage.Proxy) (bool, time.Duration, string, s
 				}
 			}
 			if !allowed {
-				return false, latency, exitIP, exitLocation
+				return false, latency, exitIP, exitLocation, "geo_blocked"
 			}
 		} else if len(v.cfg.BlockedCountries) > 0 {
 			// 黑名单模式
 			for _, blocked := range v.cfg.BlockedCountries {
 				if countryCode == blocked {
-					return false, latency, exitIP, exitLocation
+					return false, latency, exitIP, exitLocation, "geo_blocked"
 				}
 			}
 		}
@@ -236,11 +242,11 @@ func (v *Validator) ValidateOne(p storage.Proxy) (bool, time.Duration, string, s
 	// HTTP 代理额外检测：必须支持 HTTPS CONNECT 隧道
 	if p.Protocol == "http" {
 		if !checkHTTPSConnect(p.Address, v.timeout) {
-			return false, latency, exitIP, exitLocation
+			return false, latency, exitIP, exitLocation, "https_connect_failed"
 		}
 	}
 
-	return true, latency, exitIP, exitLocation
+	return true, latency, exitIP, exitLocation, ""
 }
 
 func newHTTPClient(address string, timeout time.Duration) (*http.Client, error) {

@@ -234,7 +234,7 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 		return nil
 	}
 
-	log.Printf("[custom] 订阅 [%s] 解析到 %d 个节点", sub.Name, len(nodes))
+	log.Printf("[custom] 订阅 [%s] 解析到 %d 个节点，协议分布: %s", sub.Name, len(nodes), nodeTypeSummary(nodes))
 
 	// 先删除该订阅的旧代理
 	oldDeleted, _ := m.storage.DeleteBySubscriptionID(subID)
@@ -252,6 +252,8 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 			tunnelNodes = append(tunnelNodes, node)
 		}
 	}
+	log.Printf("[custom] 订阅 [%s] 节点分类: 直连=%d (%s)，需 sing-box=%d (%s)",
+		sub.Name, len(directNodes), nodeTypeSummary(directNodes), len(tunnelNodes), nodeTypeSummary(tunnelNodes))
 
 	// 收集所有入池的代理（带正确的协议信息）
 	var allProxies []storage.Proxy
@@ -286,6 +288,8 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 		for _, n := range nodeMap {
 			mergedNodes = append(mergedNodes, n)
 		}
+		log.Printf("[custom] sing-box 合并节点: 当前订阅=%d，全部订阅去重后=%d，协议分布=%s",
+			len(tunnelNodes), len(mergedNodes), nodeTypeSummary(mergedNodes))
 
 		if err := m.singbox.Reload(mergedNodes); err != nil {
 			log.Printf("[custom] ❌ sing-box 重载失败: %v", err)
@@ -310,7 +314,8 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 
 	// 更新订阅信息（记录实际入池的代理数）
 	m.storage.UpdateSubscriptionFetch(subID, len(allProxies))
-	log.Printf("[custom] ✅ 订阅 [%s] 刷新完成，解析 %d 节点，入池 %d 个", sub.Name, len(nodes), len(allProxies))
+	log.Printf("[custom] ✅ 订阅 [%s] 刷新完成，解析 %d 节点，入池 %d 个，入池协议分布: %s",
+		sub.Name, len(nodes), len(allProxies), proxyProtocolSummary(allProxies))
 
 	return nil
 }
@@ -468,6 +473,7 @@ func (m *Manager) validateCustomProxies(proxies []storage.Proxy, subID int64) in
 	cfg := config.Get()
 	resultCh := m.validator.ValidateStream(proxies)
 	valid, invalid := 0, 0
+	failReasons := make(map[string]int)
 	for result := range resultCh {
 		if result.Valid {
 			latencyMs := int(result.Latency.Milliseconds())
@@ -476,6 +482,7 @@ func (m *Manager) validateCustomProxies(proxies []storage.Proxy, subID int64) in
 			if result.ExitLocation != "" && isGeoBlocked(result.ExitLocation, cfg) {
 				m.storage.DisableProxy(result.Proxy.Address)
 				invalid++
+				failReasons["geo_blocked"]++
 			} else {
 				m.storage.EnableProxy(result.Proxy.Address)
 				valid++
@@ -483,6 +490,11 @@ func (m *Manager) validateCustomProxies(proxies []storage.Proxy, subID int64) in
 		} else {
 			invalid++
 			m.storage.DisableProxy(result.Proxy.Address)
+			reason := result.Reason
+			if reason == "" {
+				reason = "validate_failed"
+			}
+			failReasons[reason]++
 		}
 	}
 
@@ -491,7 +503,7 @@ func (m *Manager) validateCustomProxies(proxies []storage.Proxy, subID int64) in
 		m.storage.UpdateSubscriptionSuccess(subID)
 	}
 
-	log.Printf("[custom] 验证完成：%d 可用，%d 不可用", valid, invalid)
+	log.Printf("[custom] 验证完成：%d 可用，%d 不可用，失败原因: %s", valid, invalid, stringCountSummary(failReasons))
 	return valid
 }
 
@@ -569,4 +581,16 @@ func isGeoBlocked(exitLocation string, cfg *config.Config) bool {
 // GetSingBox 获取 sing-box 进程管理器
 func (m *Manager) GetSingBox() *SingBoxProcess {
 	return m.singbox
+}
+
+func proxyProtocolSummary(proxies []storage.Proxy) string {
+	counts := make(map[string]int)
+	for _, p := range proxies {
+		proto := p.Protocol
+		if proto == "" {
+			proto = "unknown"
+		}
+		counts[proto]++
+	}
+	return stringCountSummary(counts)
 }
