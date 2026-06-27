@@ -277,6 +277,7 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
         <div class="control-ops">
           <button class="ctrl-btn-primary" onclick="triggerFetch()" data-i18n="actions.fetch">抓取代理</button>
           <button class="ctrl-btn-secondary" onclick="refreshLatency()" data-i18n="actions.refresh">刷新延迟</button>
+          <button class="ctrl-btn-secondary" onclick="openManualModal()" data-i18n="proxy.add_manual">新增节点</button>
           <!-- 配置按钮已移到顶部导航 -->
         </div>
         <div class="proxy-config">
@@ -551,6 +552,24 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
   </div>
 </div>
 
+<!-- 手工新增节点弹窗 -->
+<div class="modal-overlay" id="manual-modal" onclick="if(event.target===this) closeManualModal()" style="display:none">
+  <div class="modal" style="max-width:620px">
+    <div class="modal-title" data-i18n="proxy.add_manual_title">新增节点</div>
+    <div class="form-section">
+      <div class="form-group" style="grid-column:1/-1">
+        <label data-i18n="proxy.manual_input">节点列表</label>
+        <textarea id="manual-content" style="min-height:260px;padding:12px;background:var(--bg-card);border:1px solid var(--border);font-size:12px;font-family:var(--mono);color:var(--fg);outline:none;resize:vertical;line-height:1.6" placeholder="socks5://user:pass@192.168.1.1:1080&#10;http://192.168.1.1:8080&#10;https://user:pass@proxy.example.com:443"></textarea>
+        <div class="form-help" data-i18n="proxy.manual_help">每行输入一个代理，支持 socks5://user:pass@host:port、http://host:port、https://user:pass@host:port</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeManualModal()" data-i18n="sub.cancel">取消</button>
+      <button class="btn" id="manual-submit-btn" onclick="submitManualNodes()" data-i18n="proxy.add_manual_submit">添加</button>
+    </div>
+  </div>
+</div>
+
 <!-- 访客贡献订阅弹窗 -->
 <div class="modal-overlay" id="contribute-modal" onclick="if(event.target===this) closeContributeModal()" style="display:none">
   <div class="modal" style="max-width:460px">
@@ -647,6 +666,12 @@ const i18n = {
     'proxy.no': '否',
     'proxy.btn_delete': '删除',
     'proxy.btn_refresh': '刷新',
+    'proxy.add_manual': '新增节点',
+    'proxy.add_manual_title': '新增节点',
+    'proxy.add_manual_submit': '添加',
+    'proxy.add_manual_submitting': '添加中...',
+    'proxy.manual_input': '节点列表',
+    'proxy.manual_help': '每行输入一个代理，支持 socks5://user:pass@host:port、http://host:port、https://user:pass@host:port',
     'proxy.copy_success': '已复制',
     'proxy.refresh_started': '刷新已启动',
     'log.title': '系统日志',
@@ -763,6 +788,8 @@ const i18n = {
     'msg.sub_url_required': '请填写订阅 URL',
     'msg.sub_file_required': '请选择或拖拽配置文件',
     'msg.contribute_thanks': '感谢贡献！订阅已添加，正在导入节点...',
+    'msg.manual_required': '请填写节点列表',
+    'msg.manual_added': '已添加 {0} 个节点，跳过 {1} 个无效节点',
     'msg.submit_failed': '提交失败: ',
   },
   en: {
@@ -812,6 +839,12 @@ const i18n = {
     'proxy.no': 'No',
     'proxy.btn_delete': 'DEL',
     'proxy.btn_refresh': 'Refresh',
+    'proxy.add_manual': 'Add Node',
+    'proxy.add_manual_title': 'Add Node',
+    'proxy.add_manual_submit': 'Add',
+    'proxy.add_manual_submitting': 'Adding...',
+    'proxy.manual_input': 'Node List',
+    'proxy.manual_help': 'One proxy per line. Supports socks5://user:pass@host:port, http://host:port, https://user:pass@host:port',
     'proxy.copy_success': 'Copied',
     'proxy.refresh_started': 'Refresh started',
     'log.title': 'System Log',
@@ -922,6 +955,8 @@ const i18n = {
     'msg.sub_url_required': 'Please enter subscription URL',
     'msg.sub_file_required': 'Please select or drag a config file',
     'msg.contribute_thanks': 'Thanks! Subscription added, importing nodes...',
+    'msg.manual_required': 'Please enter proxy lines',
+    'msg.manual_added': 'Added {0} nodes, skipped {1} invalid nodes',
     'msg.submit_failed': 'Submit failed: ',
   }
 };
@@ -1598,6 +1633,47 @@ async function addSubscription() {
     document.getElementById('sub-file-label').innerHTML = '' + t('sub.file_drop') + '';
     setTimeout(loadSubscriptions, 3000);
     setTimeout(loadProxies, 5000);
+  }
+}
+
+function openManualModal() {
+  document.getElementById('manual-content').value = '';
+  document.getElementById('manual-modal').style.display = 'flex';
+}
+
+function closeManualModal() {
+  document.getElementById('manual-modal').style.display = 'none';
+}
+
+async function submitManualNodes() {
+  const content = document.getElementById('manual-content').value;
+  if (!content || !content.trim()) {
+    alert(t('msg.manual_required'));
+    return;
+  }
+
+  const btn = document.getElementById('manual-submit-btn');
+  btn.textContent = t('proxy.add_manual_submitting');
+  btn.disabled = true;
+
+  const result = await api('/api/proxy/add-manual', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content})
+  });
+
+  btn.textContent = t('proxy.add_manual_submit');
+  btn.disabled = false;
+
+  if (result && result.error) {
+    alert(t('msg.submit_failed') + result.error);
+    return;
+  }
+
+  if (result && result.status === 'added') {
+    closeManualModal();
+    showToast(t('msg.manual_added').replace('{0}', result.valid || 0).replace('{1}', result.invalid || 0));
+    loadAll();
   }
 }
 

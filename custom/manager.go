@@ -7,14 +7,14 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/net/proxy"
 	"goproxy/config"
+	"goproxy/proxyutil"
 	"goproxy/storage"
 	"goproxy/validator"
 )
@@ -427,13 +427,13 @@ func (m *Manager) fetchURL(urlStr string, p *storage.Proxy) ([]byte, error) {
 
 		switch p.Protocol {
 		case "socks5":
-			dialer, err := proxy.SOCKS5("tcp", p.Address, nil, proxy.Direct)
+			dialer, err := proxyutil.SOCKS5Dialer(p.Address)
 			if err != nil {
 				return nil, err
 			}
 			transport.Dial = dialer.Dial
 		default: // http
-			proxyURL, err := url.Parse(fmt.Sprintf("http://%s", p.Address))
+			proxyURL, err := proxyutil.HTTPURL(p.Address)
 			if err != nil {
 				return nil, err
 			}
@@ -550,6 +550,54 @@ func (m *Manager) ValidateSubscription(url, filePath string) (int, error) {
 	}
 
 	return len(nodes), nil
+}
+
+// AddManualNodes 手工新增代理节点，按行解析后验证并入库
+func (m *Manager) AddManualNodes(content string) (int, int, error) {
+	lines := strings.Split(content, "\n")
+	proxies := make([]storage.Proxy, 0, len(lines))
+	seen := make(map[string]struct{})
+	skipped := 0
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parsed, err := proxyutil.Parse(line)
+		if err != nil {
+			skipped++
+			log.Printf("[custom] 跳过手工节点: %s (%v)", line, err)
+			continue
+		}
+
+		addr := parsed.URL.String()
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+
+		proxies = append(proxies, storage.Proxy{
+			Address:  addr,
+			Protocol: parsed.Protocol,
+			Source:   "custom",
+		})
+	}
+
+	if len(proxies) == 0 {
+		return 0, skipped, fmt.Errorf("未找到有效代理节点")
+	}
+
+	for _, p := range proxies {
+		if err := m.storage.AddProxyWithSource(p.Address, p.Protocol, "custom"); err != nil {
+			return 0, skipped, err
+		}
+	}
+
+	valid := m.validateCustomProxies(proxies, 0)
+	invalid := len(proxies) - valid + skipped
+	return valid, invalid, nil
 }
 
 // isGeoBlocked 检查代理出口位置是否被地理过滤

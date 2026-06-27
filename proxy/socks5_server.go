@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"goproxy/config"
+	"goproxy/proxyutil"
 	"goproxy/storage"
 )
 
@@ -365,101 +366,14 @@ func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, 
 	
 	switch p.Protocol {
 	case "http":
-		// 连接到 HTTP 代理
-		conn, err := net.DialTimeout("tcp", p.Address, timeout)
-		if err != nil {
-			return nil, err
-		}
-		// 发送 CONNECT 请求
-		fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
-		buf := make([]byte, 256)
-		n, err := conn.Read(buf)
-		if err != nil {
-			conn.Close()
-			return nil, err
-		}
-		// 检查 HTTP 响应
-		if n < 12 || string(buf[:12]) != "HTTP/1.1 200" {
-			conn.Close()
-			return nil, fmt.Errorf("upstream proxy connect failed")
-		}
-		return conn, nil
+		return proxyutil.DialHTTPProxyConnect(p.Address, target, timeout)
 		
 	case "socks5":
-		// 使用 SOCKS5 代理
-		dialer := &net.Dialer{Timeout: timeout}
-		proxyConn, err := dialer.Dial("tcp", p.Address)
+		dialer, err := proxyutil.SOCKS5Dialer(p.Address)
 		if err != nil {
 			return nil, err
 		}
-
-		// SOCKS5 握手（无认证）
-		if _, err := proxyConn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		handshake := make([]byte, 2)
-		if _, err := io.ReadFull(proxyConn, handshake); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		if handshake[0] != 0x05 || handshake[1] != 0x00 {
-			proxyConn.Close()
-			return nil, fmt.Errorf("socks5 handshake failed")
-		}
-
-		// 发送 CONNECT 请求
-		host, port, err := net.SplitHostPort(target)
-		if err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		// 构建请求
-		req := []byte{0x05, 0x01, 0x00} // VER, CMD=CONNECT, RSV
-		
-		// 判断是 IP 还是域名
-		if ip := net.ParseIP(host); ip != nil {
-			if ip4 := ip.To4(); ip4 != nil {
-				req = append(req, 0x01) // IPv4
-				req = append(req, ip4...)
-			} else {
-				req = append(req, 0x04) // IPv6
-				req = append(req, ip...)
-			}
-		} else {
-			req = append(req, 0x03) // Domain
-			req = append(req, byte(len(host)))
-			req = append(req, []byte(host)...)
-		}
-
-		// 添加端口
-		portNum := uint16(0)
-		fmt.Sscanf(port, "%d", &portNum)
-		portBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(portBytes, portNum)
-		req = append(req, portBytes...)
-
-		if _, err := proxyConn.Write(req); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		// 读取响应
-		reply := make([]byte, 10)
-		if _, err := io.ReadAtLeast(proxyConn, reply, 10); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		if reply[1] != 0x00 {
-			proxyConn.Close()
-			return nil, fmt.Errorf("socks5 connect failed, code: %d", reply[1])
-		}
-
-		return proxyConn, nil
+		return dialer.Dial("tcp", target)
 
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", p.Protocol)

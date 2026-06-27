@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,6 +100,7 @@ func (s *Server) Start() {
 	// 管理员 API（需要登录）
 	mux.HandleFunc("/api/proxy/delete", s.authMiddleware(s.apiDeleteProxy))
 	mux.HandleFunc("/api/proxy/refresh", s.authMiddleware(s.apiRefreshProxy))
+	mux.HandleFunc("/api/proxy/add-manual", s.authMiddleware(s.apiAddManualProxy))
 	mux.HandleFunc("/api/fetch", s.authMiddleware(s.apiFetch))
 	mux.HandleFunc("/api/refresh-latency", s.authMiddleware(s.apiRefreshLatency))
 	mux.HandleFunc("/api/config/save", s.authMiddleware(s.apiConfigSave))
@@ -291,6 +293,36 @@ func (s *Server) apiRefreshProxy(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	jsonOK(w, map[string]string{"status": "refresh started"})
+}
+
+func (s *Server) apiAddManualProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if s.customMgr == nil {
+		jsonError(w, "custom manager unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	valid, invalid, err := s.customMgr.AddManualNodes(req.Content)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	log.Printf("[webui] 手工新增代理完成: valid=%d invalid=%d", valid, invalid)
+	jsonOK(w, map[string]interface{}{
+		"status":  "added",
+		"valid":   valid,
+		"invalid": invalid,
+	})
 }
 
 func (s *Server) apiFetch(w http.ResponseWriter, r *http.Request) {

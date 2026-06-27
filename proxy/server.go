@@ -9,12 +9,11 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	"golang.org/x/net/proxy"
 	"goproxy/config"
+	"goproxy/proxyutil"
 	"goproxy/storage"
 )
 
@@ -259,25 +258,9 @@ func (s *Server) dialViaProxy(p *storage.Proxy, host string) (net.Conn, error) {
 	timeout := time.Duration(s.cfg.ValidateTimeout) * time.Second
 	switch p.Protocol {
 	case "http":
-		conn, err := net.DialTimeout("tcp", p.Address, timeout)
-		if err != nil {
-			return nil, err
-		}
-		// 发送 CONNECT 请求给上游 HTTP 代理
-		fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)
-		buf := make([]byte, 256)
-		n, err := conn.Read(buf)
-		if err != nil {
-			conn.Close()
-			return nil, err
-		}
-		if n < 12 {
-			conn.Close()
-			return nil, fmt.Errorf("short response from proxy")
-		}
-		return conn, nil
+		return proxyutil.DialHTTPProxyConnect(p.Address, host, timeout)
 	case "socks5":
-		dialer, err := proxy.SOCKS5("tcp", p.Address, nil, proxy.Direct)
+		dialer, err := proxyutil.SOCKS5Dialer(p.Address)
 		if err != nil {
 			return nil, err
 		}
@@ -291,7 +274,7 @@ func (s *Server) buildClient(p *storage.Proxy) (*http.Client, error) {
 	timeout := time.Duration(s.cfg.ValidateTimeout) * time.Second
 	switch p.Protocol {
 	case "http":
-		proxyURL, err := url.Parse(fmt.Sprintf("http://%s", p.Address))
+		proxyURL, err := proxyutil.HTTPURL(p.Address)
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +283,7 @@ func (s *Server) buildClient(p *storage.Proxy) (*http.Client, error) {
 			Timeout:   timeout,
 		}, nil
 	case "socks5":
-		dialer, err := proxy.SOCKS5("tcp", p.Address, nil, proxy.Direct)
+		dialer, err := proxyutil.SOCKS5Dialer(p.Address)
 		if err != nil {
 			return nil, err
 		}

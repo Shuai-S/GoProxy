@@ -6,13 +6,12 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/net/proxy"
 	"goproxy/config"
+	"goproxy/proxyutil"
 	"goproxy/storage"
 )
 
@@ -205,7 +204,7 @@ var httpsTestTargets = []string{
 // checkHTTPSConnect 通过 HTTP 代理实际访问一个随机 HTTPS 网站，验证 CONNECT 隧道是否可用
 // 首次失败会换一个目标重试一次，避免目标网站偶尔抽风导致误杀
 func checkHTTPSConnect(proxyAddr string, timeout time.Duration) bool {
-	proxyURL, err := url.Parse(fmt.Sprintf("http://%s", proxyAddr))
+	proxyURL, err := proxyutil.HTTPURL(proxyAddr)
 	if err != nil {
 		return false
 	}
@@ -385,7 +384,7 @@ func (v *Validator) validateOneWithReason(p storage.Proxy) Result {
 }
 
 func newHTTPClient(address string, timeout time.Duration) (*http.Client, error) {
-	proxyURL, err := url.Parse(fmt.Sprintf("http://%s", address))
+	proxyURL, err := proxyutil.HTTPURL(address)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +397,7 @@ func newHTTPClient(address string, timeout time.Duration) (*http.Client, error) 
 }
 
 func newSOCKS5Client(address string, timeout time.Duration) (*http.Client, error) {
-	dialer, err := proxy.SOCKS5("tcp", address, nil, proxy.Direct)
+	dialer, err := proxyutil.SOCKS5Dialer(address)
 	if err != nil {
 		return nil, err
 	}
