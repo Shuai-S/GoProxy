@@ -128,8 +128,8 @@ body::after{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backgr
 .btn-action:hover{background:var(--border);color:var(--fg);box-shadow:0 0 8px var(--border)}
 
 /* Table */
-table{width:100%;min-width:1260px;border-collapse:collapse;font-size:11px;font-family:var(--mono);border:1px solid var(--border);background:var(--bg-card);table-layout:fixed}
-thead{position:sticky;top:78px;z-index:50;border-bottom:1px solid var(--border-heavy);background:var(--bg-elevated);box-shadow:0 2px 8px rgba(0,0,0,0.3)}
+table{width:100%;min-width:1080px;border-collapse:collapse;font-size:11px;font-family:var(--mono);border:1px solid var(--border);background:var(--bg-card);table-layout:fixed}
+thead{position:relative;z-index:1;border-bottom:1px solid var(--border-heavy);background:var(--bg-elevated);box-shadow:0 2px 8px rgba(0,0,0,0.3)}
 thead tr{height:54px}
 th{height:54px;padding:8px 12px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg-dim);font-weight:600;line-height:1.35;vertical-align:middle;white-space:normal;word-break:keep-all;overflow-wrap:normal}
 td{height:78px;padding:12px;border-bottom:1px solid var(--border);color:var(--fg-dim);vertical-align:middle}
@@ -137,6 +137,9 @@ tr:last-child td{border-bottom:none}
 tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
 .cell-mono{font-family:var(--mono);font-size:10px}
 .cell-grade{font-weight:700;font-size:14px}
+.cell-stack{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cell-main{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cell-sub{font-size:9px;color:var(--gray-5);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cell-protocol{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
 .subscription-badge{display:inline-block;background:var(--yellow);color:#000;font-size:8px;font-weight:700;padding:1px 5px;letter-spacing:0.05em;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cell-action{width:80px}
@@ -145,11 +148,9 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
 .th-grade{width:48px}
 .th-protocol{width:138px}
 .th-address{width:180px}
-.th-exit-ip{width:140px}
-.th-location{width:190px}
-.th-ip-type{width:118px}
+.th-exit-ip{width:150px}
+.th-location{width:220px}
 .th-risk{width:128px}
-.th-residential{width:78px}
 .th-latency{width:78px}
 .th-usage{width:84px}
 .th-action{width:86px}
@@ -1242,13 +1243,15 @@ function hasIPProfile(p) {
   return !!(p.ip_type || (p.risk_level && p.risk_level !== 'Unknown'));
 }
 
-function renderResidentialBadge(p) {
+function renderIPTypeLine(p) {
+  return '<div class="cell-sub">' + t('proxy.th_ip_type') + ': ' + (p.ip_type ? esc(p.ip_type) : '—') + '</div>';
+}
+
+function renderResidentialLine(p) {
   if (!hasIPProfile(p)) {
-    return '<span class="badge badge-muted">—</span>';
+    return '<div class="cell-sub">' + t('proxy.th_residential') + ': —</div>';
   }
-  return p.is_residential
-    ? '<span class="badge badge-risk-low">' + t('proxy.yes') + '</span>'
-    : '<span class="badge badge-muted">' + t('proxy.no') + '</span>';
+  return '<div class="cell-sub">' + t('proxy.th_residential') + ': ' + (p.is_residential ? t('proxy.yes') : t('proxy.no')) + '</div>';
 }
 
 function renderProxies(proxies) {
@@ -1262,9 +1265,7 @@ function renderProxies(proxies) {
     html += '<th class="th-address" data-i18n="proxy.th_address">' + t('proxy.th_address') + '</th>';
     html += '<th class="th-exit-ip" data-i18n="proxy.th_exit_ip">' + t('proxy.th_exit_ip') + '</th>';
     html += '<th class="th-location" data-i18n="proxy.th_location">' + t('proxy.th_location') + '</th>';
-    html += '<th class="th-ip-type" data-i18n="proxy.th_ip_type">' + t('proxy.th_ip_type') + '</th>';
     html += '<th class="th-risk" data-i18n="proxy.th_risk">' + t('proxy.th_risk') + '</th>';
-    html += '<th class="th-residential" data-i18n="proxy.th_residential">' + t('proxy.th_residential') + '</th>';
     html += '<th class="th-latency" data-i18n="proxy.th_latency">' + t('proxy.th_latency') + '</th>';
     html += '<th class="th-usage" data-i18n="proxy.th_usage">' + t('proxy.th_usage') + '</th>';
     if (isAdmin) {
@@ -1287,11 +1288,9 @@ function renderProxies(proxies) {
       }
       html += '</div></td>';
       html += '<td class="cell-mono cell-clickable" onclick="copyToClipboard(\'' + jsString(p.address) + '\')" title="Copy">' + esc(p.address) + '</td>';
-      html += '<td class="cell-mono">' + (p.exit_ip ? esc(p.exit_ip) : '—') + '</td>';
-      html += '<td>' + flag + ' ' + (p.exit_location ? esc(p.exit_location) : '—') + '</td>';
-      html += '<td class="cell-mono">' + (p.ip_type ? esc(p.ip_type) : '—') + '</td>';
+      html += '<td><div class="cell-stack"><div class="cell-main cell-mono">' + (p.exit_ip ? esc(p.exit_ip) : '—') + '</div>' + renderIPTypeLine(p) + '</div></td>';
+      html += '<td><div class="cell-stack"><div class="cell-main">' + flag + ' ' + (p.exit_location ? esc(p.exit_location) : '—') + '</div>' + renderResidentialLine(p) + '</div></td>';
       html += '<td>' + renderRiskBadge(p) + '</td>';
-      html += '<td>' + renderResidentialBadge(p) + '</td>';
       html += '<td class="cell-mono ' + latencyClass + '">' + (p.latency > 0 ? p.latency + 'ms' : '—') + '</td>';
       html += '<td class="cell-mono">' + (p.use_count || 0) + ' / ' + (p.success_count || 0) + '</td>';
       
