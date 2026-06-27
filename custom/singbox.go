@@ -8,11 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+var singBoxOutboundIndexRE = regexp.MustCompile(`outbound\[(\d+)\]`)
 
 // SingBoxProcess 管理 sing-box 子进程
 type SingBoxProcess struct {
@@ -67,9 +70,17 @@ func (s *SingBoxProcess) Reload(nodes []ParsedNode) error {
 		return nil
 	}
 
-	// 生成配置
-	if err := s.generateConfig(tunnelNodes); err != nil {
-		return fmt.Errorf("生成 sing-box 配置失败: %w", err)
+	// 生成并校验配置。单个节点配置错误时自动剔除，避免拖垮整批订阅。
+	validNodes, err := s.generateValidConfig(tunnelNodes)
+	if err != nil {
+		return err
+	}
+	if len(validNodes) == 0 {
+		log.Println("[custom] ⚠️ sing-box 节点全部无效，停止进程")
+		s.stopLocked()
+		s.nodes = nil
+		s.portMap = make(map[string]int)
+		return nil
 	}
 
 	// 重启进程
@@ -78,24 +89,84 @@ func (s *SingBoxProcess) Reload(nodes []ParsedNode) error {
 		return fmt.Errorf("启动 sing-box 失败: %w", err)
 	}
 
-	s.nodes = tunnelNodes
+	s.nodes = validNodes
 	return nil
 }
 
+// generateValidConfig 生成可通过 sing-box check 的配置，自动跳过报错定位到的坏节点。
+func (s *SingBoxProcess) generateValidConfig(nodes []ParsedNode) ([]ParsedNode, error) {
+	binPath, err := exec.LookPath(s.binPath)
+	if err != nil {
+		return nil, fmt.Errorf("sing-box 未找到: %s（请安装 sing-box 或设置 SINGBOX_PATH）", s.binPath)
+	}
+
+	oldPortMap := clonePortMap(s.portMap)
+	oldConfig, hadOldConfig, readErr := readFileIfExists(s.configFile)
+	if readErr != nil {
+		return nil, fmt.Errorf("读取旧 sing-box 配置失败: %w", readErr)
+	}
+
+	candidates := append([]ParsedNode(nil), nodes...)
+	skipped := 0
+
+	for len(candidates) > 0 {
+		validNodes, err := s.generateConfig(candidates)
+		if err != nil {
+			s.restoreConfig(oldPortMap, oldConfig, hadOldConfig)
+			return nil, fmt.Errorf("生成 sing-box 配置失败: %w", err)
+		}
+		if len(validNodes) == 0 {
+			return nil, nil
+		}
+
+		checkOutput, err := s.checkConfig(binPath)
+		if err == nil {
+			if skipped > 0 {
+				log.Printf("[custom] ✅ sing-box 配置校验通过，已跳过 %d 个无效节点，保留 %d 个节点", skipped, len(validNodes))
+			}
+			return validNodes, nil
+		}
+
+		output := string(checkOutput)
+		outboundIndex, ok := parseSingBoxOutboundIndex(output)
+		if !ok || outboundIndex < 0 || outboundIndex >= len(validNodes) {
+			s.restoreConfig(oldPortMap, oldConfig, hadOldConfig)
+			log.Printf("[custom] ❌ sing-box 配置检查失败:\n%s", output)
+			return nil, fmt.Errorf("sing-box 配置无效: %s", output)
+		}
+
+		badNode := validNodes[outboundIndex]
+		log.Printf("[custom] ⚠️ 跳过无效 sing-box 节点: %s (%s://%s:%d)，错误: %s",
+			badNode.Name, badNode.Type, badNode.Server, badNode.Port, firstLogLine(output))
+		candidates = removeNodeByKey(candidates, badNode.NodeKey())
+		skipped++
+	}
+
+	return nil, nil
+}
+
 // generateConfig 生成 sing-box JSON 配置
-func (s *SingBoxProcess) generateConfig(nodes []ParsedNode) error {
+func (s *SingBoxProcess) generateConfig(nodes []ParsedNode) ([]ParsedNode, error) {
 	s.portMap = make(map[string]int)
 	port := s.basePort
 
 	var inbounds []map[string]interface{}
 	var outbounds []map[string]interface{}
 	var rules []map[string]interface{}
+	var validNodes []ParsedNode
 
-	for i, node := range nodes {
+	for _, node := range nodes {
+		// 出站：根据节点类型生成
+		tag := fmt.Sprintf("node-%d", len(validNodes))
+		outbound := buildOutbound(node, tag)
+		if outbound == nil {
+			log.Printf("[custom] 跳过不支持的节点类型: %s (%s)", node.Name, node.Type)
+			continue
+		}
+
 		port++
 		key := node.NodeKey()
 		s.portMap[key] = port
-		tag := fmt.Sprintf("node-%d", i)
 
 		// 入站：本地 SOCKS5 监听
 		inbounds = append(inbounds, map[string]interface{}{
@@ -104,15 +175,8 @@ func (s *SingBoxProcess) generateConfig(nodes []ParsedNode) error {
 			"listen":      "127.0.0.1",
 			"listen_port": port,
 		})
-
-		// 出站：根据节点类型生成
-		outbound := buildOutbound(node, tag)
-		if outbound == nil {
-			log.Printf("[custom] 跳过不支持的节点类型: %s (%s)", node.Name, node.Type)
-			delete(s.portMap, key)
-			continue
-		}
 		outbounds = append(outbounds, outbound)
+		validNodes = append(validNodes, node)
 
 		// 路由规则：入站 → 出站
 		rules = append(rules, map[string]interface{}{
@@ -141,10 +205,10 @@ func (s *SingBoxProcess) generateConfig(nodes []ParsedNode) error {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return os.WriteFile(s.configFile, data, 0644)
+	return validNodes, os.WriteFile(s.configFile, data, 0644)
 }
 
 // buildOutbound 根据节点类型构建 sing-box 出站配置
@@ -359,6 +423,75 @@ func convertPluginOpts(plugin string, opts map[string]interface{}) string {
 	return strings.Join(parts, ";")
 }
 
+func parseSingBoxOutboundIndex(output string) (int, bool) {
+	matches := singBoxOutboundIndexRE.FindStringSubmatch(output)
+	if len(matches) != 2 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, false
+	}
+	return index, true
+}
+
+func removeNodeByKey(nodes []ParsedNode, key string) []ParsedNode {
+	filtered := nodes[:0]
+	for _, node := range nodes {
+		if node.NodeKey() != key {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
+}
+
+func firstLogLine(output string) string {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return strings.TrimSpace(output)
+}
+
+func clonePortMap(portMap map[string]int) map[string]int {
+	cloned := make(map[string]int, len(portMap))
+	for k, v := range portMap {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func readFileIfExists(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return data, true, nil
+	}
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	return nil, false, err
+}
+
+func (s *SingBoxProcess) restoreConfig(portMap map[string]int, config []byte, hadConfig bool) {
+	s.portMap = portMap
+	if hadConfig {
+		if err := os.WriteFile(s.configFile, config, 0644); err != nil {
+			log.Printf("[custom] ⚠️ 恢复旧 sing-box 配置失败: %v", err)
+		}
+		return
+	}
+	if err := os.Remove(s.configFile); err != nil && !os.IsNotExist(err) {
+		log.Printf("[custom] ⚠️ 删除无效 sing-box 配置失败: %v", err)
+	}
+}
+
+func (s *SingBoxProcess) checkConfig(binPath string) ([]byte, error) {
+	checkCmd := exec.Command(binPath, "check", "-c", s.configFile, "-D", s.configDir)
+	return checkCmd.CombinedOutput()
+}
+
 // startLocked 启动 sing-box（需持有锁）
 func (s *SingBoxProcess) startLocked() error {
 	binPath, err := exec.LookPath(s.binPath)
@@ -367,8 +500,7 @@ func (s *SingBoxProcess) startLocked() error {
 	}
 
 	// 先检查配置是否有效
-	checkCmd := exec.Command(binPath, "check", "-c", s.configFile, "-D", s.configDir)
-	if checkOutput, err := checkCmd.CombinedOutput(); err != nil {
+	if checkOutput, err := s.checkConfig(binPath); err != nil {
 		log.Printf("[custom] ❌ sing-box 配置检查失败:\n%s", string(checkOutput))
 		return fmt.Errorf("sing-box 配置无效: %s", string(checkOutput))
 	}

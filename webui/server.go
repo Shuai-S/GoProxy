@@ -387,6 +387,12 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 		"custom_free_priority":    cfg.CustomFreePriority,
 		"custom_probe_interval":   cfg.CustomProbeInterval,
 		"custom_refresh_interval": cfg.CustomRefreshInterval,
+
+		// 代理监听端口
+		"proxy_port":         cfg.ProxyPort,
+		"stable_proxy_port":  cfg.StableProxyPort,
+		"socks5_port":        cfg.SOCKS5Port,
+		"stable_socks5_port": cfg.StableSOCKS5Port,
 	})
 }
 

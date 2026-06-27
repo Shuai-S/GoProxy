@@ -43,7 +43,6 @@ button:hover{box-shadow:0 0 25px rgba(0,255,65,0.8);transform:translateY(-1px)}
     <input type="password" name="password" placeholder="****************" autofocus>
     <button type="submit">[ AUTHENTICATE ]</button>
   </form>
-  <p class="tip">访客模式可<a href="/">查看数据</a>，管理员登录后可完全控制</p>
 </div>
 </body>
 </html>`
@@ -93,7 +92,6 @@ button:hover{box-shadow:0 0 25px rgba(0,255,65,0.8);transform:translateY(-1px)}
     <input type="password" name="password" placeholder="****************" autofocus>
     <button type="submit">[ AUTHENTICATE ]</button>
   </form>
-  <p class="tip">访客模式可<a href="/">查看数据</a>，管理员登录后可完全控制</p>
 </div>
 </body>
 </html>`

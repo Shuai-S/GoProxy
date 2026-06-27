@@ -57,6 +57,14 @@ body::after{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backgr
 .ctrl-btn-primary:hover{background:var(--border);box-shadow:0 0 15px var(--border-heavy);color:var(--fg);text-shadow:0 0 5px var(--fg)}
 .ctrl-btn-secondary{width:100%;padding:8px;font-size:9px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--fg-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.08em;transition:all 0.2s}
 .ctrl-btn-secondary:hover{background:var(--border);color:var(--fg);box-shadow:0 0 8px var(--border)}
+.proxy-config{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.proxy-config-title{font-size:8px;text-transform:uppercase;letter-spacing:0.14em;color:var(--fg-dim);margin-bottom:8px;font-weight:600}
+.proxy-config-list{display:flex;flex-direction:column;gap:6px}
+.proxy-config-row{display:grid;grid-template-columns:88px 1fr 34px;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg);padding:6px}
+.proxy-config-label{font-size:8px;color:var(--fg-dim);letter-spacing:0.08em;text-transform:uppercase}
+.proxy-config-address{min-width:0;font-size:9px;color:var(--fg);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proxy-copy-btn{height:26px;border:1px solid var(--border);background:var(--bg-card);color:var(--fg-dim);cursor:pointer;font-size:10px;font-family:var(--mono);transition:all 0.2s}
+.proxy-copy-btn:hover{background:var(--border);color:var(--fg);box-shadow:0 0 8px var(--border)}
 
 /* 代理列表区域 */
 .proxy-section{display:block}
@@ -248,6 +256,16 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
           <button class="ctrl-btn-primary" onclick="triggerFetch()" data-i18n="actions.fetch">抓取代理</button>
           <button class="ctrl-btn-secondary" onclick="refreshLatency()" data-i18n="actions.refresh">刷新延迟</button>
           <!-- 配置按钮已移到顶部导航 -->
+        </div>
+        <div class="proxy-config">
+          <div class="proxy-config-title" data-i18n="control.proxy_config">代理配置地址</div>
+          <div class="proxy-config-list" id="proxy-config-list">
+            <div class="proxy-config-row">
+              <span class="proxy-config-label">HTTP R</span>
+              <span class="proxy-config-address">—</span>
+              <button class="proxy-copy-btn" type="button">⧉</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -581,6 +599,11 @@ const i18n = {
     'actions.fetch': '抓取代理',
     'actions.refresh': '刷新延迟',
     'actions.config': '配置池子',
+    'control.proxy_config': '代理配置地址',
+    'control.http_random': 'HTTP随机',
+    'control.http_stable': 'HTTP稳定',
+    'control.socks_random': 'SOCKS随机',
+    'control.socks_stable': 'SOCKS稳定',
     'proxy.title': '代理列表',
     'proxy.tab_all': '全部',
     'proxy.filter_protocol': '协议',
@@ -736,6 +759,11 @@ const i18n = {
     'actions.fetch': 'Fetch Proxies',
     'actions.refresh': 'Refresh Latency',
     'actions.config': 'Configure Pool',
+    'control.proxy_config': 'Proxy Config Addresses',
+    'control.http_random': 'HTTP Random',
+    'control.http_stable': 'HTTP Stable',
+    'control.socks_random': 'SOCKS Random',
+    'control.socks_stable': 'SOCKS Stable',
     'proxy.title': 'Proxy Registry',
     'proxy.tab_all': 'All',
     'proxy.filter_protocol': 'Protocol',
@@ -909,6 +937,7 @@ function toggleLang() {
   // 重新渲染包含动态 t() 文字的模块
   loadSubscriptions();
   loadPoolStatus();
+  loadProxyConfig();
 }
 
 // 页面加载时恢复语言设置
@@ -989,11 +1018,62 @@ function showToast(message) {
 }
 
 function copyToClipboard(text) {
-  navigator.clipboard.writeText(text).then(() => {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast(t('proxy.copy_success') + ': ' + text);
+    }).catch(err => {
+      console.error('Copy failed:', err);
+    });
+    return;
+  }
+  const input = document.createElement('textarea');
+  input.value = text;
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  try {
+    document.execCommand('copy');
     showToast(t('proxy.copy_success') + ': ' + text);
-  }).catch(err => {
+  } catch (err) {
     console.error('Copy failed:', err);
-  });
+  }
+  document.body.removeChild(input);
+}
+
+function normalizePort(portValue) {
+  return String(portValue || '').replace(':', '');
+}
+
+function proxyHost() {
+  return window.location.hostname || window.location.host.split(':')[0];
+}
+
+function renderProxyConfig(cfg) {
+  const el = document.getElementById('proxy-config-list');
+  if (!el || !cfg) return;
+
+  const host = proxyHost();
+  const items = [
+    {label: t('control.http_random'), value: 'http://' + host + ':' + normalizePort(cfg.proxy_port)},
+    {label: t('control.http_stable'), value: 'http://' + host + ':' + normalizePort(cfg.stable_proxy_port)},
+    {label: t('control.socks_random'), value: 'socks5://' + host + ':' + normalizePort(cfg.socks5_port)},
+    {label: t('control.socks_stable'), value: 'socks5://' + host + ':' + normalizePort(cfg.stable_socks5_port)}
+  ];
+
+  el.innerHTML = items.map(item =>
+    '<div class="proxy-config-row">' +
+      '<span class="proxy-config-label">' + item.label + '</span>' +
+      '<span class="proxy-config-address" title="' + item.value + '">' + item.value + '</span>' +
+      '<button class="proxy-copy-btn" type="button" onclick="copyToClipboard(\'' + item.value + '\')" title="Copy">⧉</button>' +
+    '</div>'
+  ).join('');
+}
+
+async function loadProxyConfig() {
+  const cfg = await api('/api/config');
+  renderProxyConfig(cfg);
 }
 
 async function refreshProxy(address) {
@@ -1299,6 +1379,7 @@ async function loadAll() {
   await checkAuth(); // 先检查权限
   loadPoolStatus();
   loadQualityDistribution();
+  loadProxyConfig();
   loadProxies();
   loadLogs();
 }

@@ -21,11 +21,11 @@ import (
 
 // Manager 订阅管理器
 type Manager struct {
-	storage    *storage.Storage
-	validator  *validator.Validator
-	singbox    *SingBoxProcess
-	stopCh     chan struct{}
-	refreshMu  sync.Mutex // 防止并发刷新
+	storage   *storage.Storage
+	validator *validator.Validator
+	singbox   *SingBoxProcess
+	stopCh    chan struct{}
+	refreshMu sync.Mutex // 防止并发刷新
 }
 
 // NewManager 创建订阅管理器
@@ -291,15 +291,17 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 			log.Printf("[custom] ❌ sing-box 重载失败: %v", err)
 		} else {
 			portMap := m.singbox.GetPortMap()
+			added := 0
 			for _, node := range tunnelNodes {
 				key := node.NodeKey()
 				if port, ok := portMap[key]; ok {
 					addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 					m.storage.AddProxyWithSource(addr, "socks5", "custom", subID)
 					allProxies = append(allProxies, storage.Proxy{Address: addr, Protocol: "socks5", Source: "custom"})
+					added++
 				}
 			}
-			log.Printf("[custom] 📥 %d 个加密节点通过 sing-box 转换入池", len(tunnelNodes))
+			log.Printf("[custom] 📥 %d/%d 个加密节点通过 sing-box 转换入池", added, len(tunnelNodes))
 		}
 	}
 
@@ -500,10 +502,10 @@ func (m *Manager) GetStatus() map[string]interface{} {
 	subs, _ := m.storage.GetSubscriptions()
 
 	return map[string]interface{}{
-		"singbox_running":   m.singbox.IsRunning(),
-		"singbox_nodes":     m.singbox.GetNodeCount(),
-		"custom_count":      customCount,
-		"disabled_count":    len(disabled),
+		"singbox_running":    m.singbox.IsRunning(),
+		"singbox_nodes":      m.singbox.GetNodeCount(),
+		"custom_count":       customCount,
+		"disabled_count":     len(disabled),
 		"subscription_count": len(subs),
 	}
 }
