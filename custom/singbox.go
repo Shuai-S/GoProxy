@@ -258,6 +258,7 @@ func buildOutbound(node ParsedNode, tag string) map[string]interface{} {
 	case "hysteria2":
 		out["type"] = "hysteria2"
 		out["password"] = getStr(raw, "password")
+		applyHysteria2Obfs(raw, out)
 		applyTLS(raw, out)
 
 	case "hysteria":
@@ -421,6 +422,20 @@ func convertPluginOpts(plugin string, opts map[string]interface{}) string {
 		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 	}
 	return strings.Join(parts, ";")
+}
+
+func applyHysteria2Obfs(raw map[string]interface{}, out map[string]interface{}) {
+	obfsType := getStr(raw, "obfs")
+	obfsPassword := firstStringValue(raw, "obfs-password", "obfs_password", "obfsPassword")
+	if obfsType == "" || obfsPassword == "" {
+		return
+	}
+	if obfsType == "salamander" || obfsType == "gecko" {
+		out["obfs"] = map[string]interface{}{
+			"type":     obfsType,
+			"password": obfsPassword,
+		}
+	}
 }
 
 func parseSingBoxOutboundIndex(output string) (int, bool) {
@@ -654,6 +669,15 @@ func getStrDefault(m map[string]interface{}, key, def string) string {
 		return s
 	}
 	return def
+}
+
+func firstStringValue(m map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value := getStr(m, key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func getInt(m map[string]interface{}, key string) int {
