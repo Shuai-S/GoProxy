@@ -1,7 +1,7 @@
 services:
   goproxy:
     # 使用预构建镜像（每次部署自动拉取最新版本）
-    image: ghcr.io/isboyjc/goproxy:latest
+    image: ghcr.io/shuai-s/goproxy:latest
     pull_policy: always
     
     # 或使用本地构建（取消下面注释，注释上面的 image 和 pull_policy 行）
