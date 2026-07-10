@@ -38,13 +38,12 @@ GoProxy 从公开代理源自动抓取 HTTP/SOCKS5 代理，同时支持导入 C
 
 ### 多端口多协议
 
-| 端口 | 协议 | 模式 | 适用场景 |
-|------|------|------|---------|
-| 7777 | HTTP | 随机轮换 | 爬虫、数据采集、IP 多样性 |
-| 7776 | HTTP | 最低延迟 | 长连接、流媒体、稳定优先 |
-| 7779 | SOCKS5 | 随机轮换 | 浏览器、SSH、游戏 |
-| 7780 | SOCKS5 | 最低延迟 | 稳定应用、固定连接 |
+| 端口 | 客户端协议 | 模式 | 适用场景 |
+|------|-----------|------|---------|
+| 7777 | HTTP + SOCKS5 | 随机轮换 | 爬虫、数据采集、IP 多样性 |
+| 7776 | HTTP + SOCKS5 | 最低延迟 | 长连接、流媒体、稳定优先 |
 | 7778 | HTTP | WebUI | 管理面板（双角色权限） |
+| 7779 起 | HTTP + SOCKS5 | 固定节点 | 固定出口 IP、账号隔离、多业务端口 |
 
 ### WebUI 仪表盘
 
@@ -104,16 +103,30 @@ export https_proxy=http://localhost:7777
 
 ### SOCKS5 代理
 
-```bash
-# 随机轮换
-curl --socks5 localhost:7779 https://httpbin.org/ip
+HTTP 和 SOCKS5 共用策略端口，URL scheme 决定客户端协议，端口决定选择策略：
 
-# 最低延迟
-curl --socks5 localhost:7780 https://httpbin.org/ip
+```bash
+# 随机轮换（与 HTTP 随机共用 7777）
+curl --proxy socks5h://localhost:7777 https://httpbin.org/ip
+
+# 最低延迟（与 HTTP 稳定共用 7776）
+curl --proxy socks5h://localhost:7776 https://httpbin.org/ip
 
 # 环境变量方式
-export ALL_PROXY=socks5://localhost:7779
+export ALL_PROXY=socks5://localhost:7777
 ```
+
+### 固定端口
+
+管理员可在 WebUI 的 `[ FIXED_PORTS ]` 面板选择一个节点并绑定本地端口。固定端口同时接受 HTTP 和 SOCKS5，不自动切换其他节点：
+
+```bash
+# 假设在 WebUI 将 7779 绑定到一个固定节点
+curl -x http://localhost:7779 https://httpbin.org/ip
+curl --proxy socks5h://localhost:7779 https://httpbin.org/ip
+```
+
+Docker 用户需要在 `ports:` 中映射所用固定端口；默认 compose 已映射 7779 和 7780。
 
 ### 带认证使用
 
@@ -122,11 +135,11 @@ export ALL_PROXY=socks5://localhost:7779
 curl -x http://user:pass@your-server:7777 https://httpbin.org/ip
 
 # SOCKS5
-curl --socks5 user:pass@your-server:7779 https://httpbin.org/ip
+curl --proxy socks5h://user:pass@your-server:7777 https://httpbin.org/ip
 
 # 环境变量
 export http_proxy=http://user:pass@your-server:7777
-export ALL_PROXY=socks5://user:pass@your-server:7779
+export ALL_PROXY=socks5://user:pass@your-server:7777
 ```
 
 ### 编程语言示例
@@ -140,7 +153,7 @@ proxies = {'http': 'http://localhost:7777', 'https': 'http://localhost:7777'}
 requests.get('https://httpbin.org/ip', proxies=proxies)
 
 # SOCKS5 代理（需 pip install requests[socks]）
-proxies = {'http': 'socks5://localhost:7779', 'https': 'socks5://localhost:7779'}
+proxies = {'http': 'socks5://localhost:7777', 'https': 'socks5://localhost:7777'}
 requests.get('https://httpbin.org/ip', proxies=proxies)
 ```
 
@@ -149,15 +162,15 @@ requests.get('https://httpbin.org/ip', proxies=proxies)
 // SOCKS5（需 npm install socks-proxy-agent node-fetch）
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const fetch = require('node-fetch');
-const agent = new SocksProxyAgent('socks5://localhost:7779');
+const agent = new SocksProxyAgent('socks5://localhost:7777');
 fetch('https://httpbin.org/ip', { agent }).then(r => r.json()).then(console.log);
 ```
 
 **浏览器 / SSH**：
 ```bash
-# 浏览器：设置 → 代理 → SOCKS5 → localhost:7779
+# 浏览器：设置 → 代理 → SOCKS5 → localhost:7777
 # SSH 隧道：
-ssh -o ProxyCommand='nc -X 5 -x localhost:7779 %h %p' user@remote-server
+ssh -o ProxyCommand='nc -X 5 -x localhost:7777 %h %p' user@remote-server
 ```
 
 ## 订阅导入
@@ -191,6 +204,8 @@ docker run -d --name proxygo \
   -v goproxy-data:/app/data \
   ghcr.io/isboyjc/goproxy:latest
 ```
+
+`7776/7777` 分别是双协议稳定/随机入口；`7779/7780` 是默认固定端口槽位，需先在 WebUI 绑定节点。新增其他固定端口时，还需增加对应的 `-p hostPort:containerPort` 映射。
 
 ### 数据持久化
 
@@ -250,7 +265,7 @@ main.go                    # 入口，协调所有模块
 │   ├── parser.go          #   格式自动识别解析
 │   ├── singbox.go         #   sing-box 进程管理
 │   └── manager.go         #   刷新循环 + 探测唤醒 + 过期清理
-├── proxy/                 # 代理服务（HTTP + SOCKS5，4 端口）
+├── proxy/                 # 双协议代理服务（2 个策略端口 + 动态固定端口）
 ├── webui/                 # 管理面板（嵌入式 HTML + REST API）
 └── logger/                # 日志收集
 ```

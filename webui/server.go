@@ -425,8 +425,8 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 		// 代理监听端口
 		"proxy_port":         cfg.ProxyPort,
 		"stable_proxy_port":  cfg.StableProxyPort,
-		"socks5_port":        cfg.SOCKS5Port,
-		"stable_socks5_port": cfg.StableSOCKS5Port,
+		"socks5_port":        cfg.ProxyPort,       // 兼容旧前端：SOCKS5 随机与 HTTP 共用端口
+		"stable_socks5_port": cfg.StableProxyPort, // 兼容旧前端：SOCKS5 稳定与 HTTP 共用端口
 		"fixed_ports":        cfg.FixedPorts,
 	})
 }
@@ -518,7 +518,7 @@ func (s *Server) apiConfigSave(w http.ResponseWriter, r *http.Request) {
 	if req.CustomRefreshInterval > 0 {
 		newCfg.CustomRefreshInterval = req.CustomRefreshInterval
 	}
-	newCfg.FixedPorts = req.FixedPorts
+	newCfg.FixedPorts = normalizeFixedPortBindings(req.FixedPorts)
 
 	if err := config.Save(&newCfg); err != nil {
 		jsonError(w, "save config error: "+err.Error(), http.StatusInternalServerError)
@@ -872,11 +872,9 @@ func (s *Server) apiSubscriptionToggle(w http.ResponseWriter, r *http.Request) {
 func validateFixedPorts(bindings []config.FixedPortBinding, cfg *config.Config) error {
 	reserved := make(map[int]string)
 	for label, value := range map[string]string{
-		"HTTP 随机端口":   cfg.ProxyPort,
-		"HTTP 稳定端口":   cfg.StableProxyPort,
-		"SOCKS5 随机端口": cfg.SOCKS5Port,
-		"SOCKS5 稳定端口": cfg.StableSOCKS5Port,
-		"WebUI 端口":    cfg.WebUIPort,
+		"随机代理端口":   cfg.ProxyPort,
+		"稳定代理端口":   cfg.StableProxyPort,
+		"WebUI 端口": cfg.WebUIPort,
 	} {
 		_, portText, err := net.SplitHostPort(value)
 		if err != nil {
@@ -900,14 +898,26 @@ func validateFixedPorts(bindings []config.FixedPortBinding, cfg *config.Config) 
 			return fmt.Errorf("固定端口 %d 重复", binding.Port)
 		}
 		seen[binding.Port] = true
-		if binding.Protocol != "http" && binding.Protocol != "socks5" {
-			return fmt.Errorf("固定端口 %d 的协议无效", binding.Port)
+		if binding.Protocol != "" && binding.Protocol != "http" && binding.Protocol != "socks5" {
+			return fmt.Errorf("固定端口 %d 的旧协议字段无效", binding.Port)
 		}
 		if strings.TrimSpace(binding.ProxyAddress) == "" {
 			return fmt.Errorf("固定端口 %d 未选择代理节点", binding.Port)
 		}
 	}
 	return nil
+}
+
+func normalizeFixedPortBindings(bindings []config.FixedPortBinding) []config.FixedPortBinding {
+	if bindings == nil {
+		return nil
+	}
+	normalized := make([]config.FixedPortBinding, len(bindings))
+	copy(normalized, bindings)
+	for i := range normalized {
+		normalized[i].Protocol = ""
+	}
+	return normalized
 }
 
 func jsonOK(w http.ResponseWriter, data interface{}) {

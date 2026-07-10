@@ -10,11 +10,11 @@ services:
     container_name: ${CONTAINER_NAME:-goproxy}
     restart: unless-stopped
     ports:
-      - "${STABLE_PORT:-7776}:7776"          # HTTP 最低延迟
-      - "${RANDOM_PORT:-7777}:7777"          # HTTP 随机轮换
+      - "${STABLE_PORT:-7776}:7776"          # HTTP + SOCKS5 最低延迟
+      - "${RANDOM_PORT:-7777}:7777"          # HTTP + SOCKS5 随机轮换
       - "${WEBUI_PORT:-7778}:7778"           # WebUI（有登录认证）
-      - "${SOCKS5_RANDOM_PORT:-7779}:7779"   # SOCKS5 随机轮换
-      - "${SOCKS5_STABLE_PORT:-7780}:7780"   # SOCKS5 最低延迟
+      - "${FIXED_PORT_1:-7779}:7779"          # 固定端口槽位 1
+      - "${FIXED_PORT_2:-7780}:7780"          # 固定端口槽位 2
     volumes:
       - goproxy-data:/app/data
     environment:

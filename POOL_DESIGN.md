@@ -17,8 +17,8 @@ GoProxy 是一个单二进制的智能代理池系统，由多个协作的 gorou
                                     │                           │
                          ┌──────────┴──────────────┐   ┌───────┴────────┐
                          │      对外代理服务          │   │   sing-box     │
-                         │  HTTP  (:7776 / :7777)    │   │  协议转换进程   │
-                         │  SOCKS5 (:7779 / :7780)   │   │  vmess/trojan  │
+                         │ HTTP+SOCKS5 (:7776/:7777) │   │  协议转换进程   │
+                         │ 固定双协议端口 (:7779+)    │   │  vmess/trojan  │
                          └───────────────────────────┘   │  → local socks5│
                                                          └────────────────┘
 ```
@@ -39,8 +39,10 @@ main.go (orchestrator)
   │   ├── singbox.go    sing-box 进程管理（配置生成 + 启停 + 端口映射）
   │   └── manager.go    刷新循环 + 探测唤醒 + 过期清理
   ├── proxy/        对外代理服务
-  │   ├── server.go       HTTP 代理（支持 CONNECT 隧道）
-  │   └── socks5_server.go SOCKS5 代理（原生协议实现）
+  │   ├── multiplexed_server.go HTTP/SOCKS5 同端口协议分流
+  │   ├── server.go             HTTP 代理（支持 CONNECT 隧道）
+  │   ├── socks5_server.go      SOCKS5 代理（原生协议实现）
+  │   └── fixedport.go          动态固定节点双协议端口
   ├── webui/        管理面板（嵌入式 HTML + REST API）
   └── logger/       内存日志收集（供 WebUI 展示）
 ```
@@ -194,9 +196,8 @@ Docker 镜像自带 sing-box 二进制，支持 amd64/arm64。本地运行需手
 
 | 端口 | 服务 | 模式 |
 |------|------|------|
-| 7776 | HTTP 代理 | 最低延迟 |
-| 7777 | HTTP 代理 | 随机轮换 |
+| 7776 | HTTP + SOCKS5 代理 | 最低延迟 |
+| 7777 | HTTP + SOCKS5 代理 | 随机轮换 |
 | 7778 | WebUI | 管理面板 |
-| 7779 | SOCKS5 代理 | 随机轮换 |
-| 7780 | SOCKS5 代理 | 最低延迟 |
+| 7779+ | HTTP + SOCKS5 固定端口 | 绑定指定节点 |
 | 20001+ | sing-box 本地 | 仅 127.0.0.1 |

@@ -57,12 +57,20 @@ func (s *Server) Start() error {
 		authStatus = fmt.Sprintf("需认证 (用户: %s)", s.cfg.ProxyAuthUsername)
 	}
 	log.Printf("proxy server listening on %s [%s] [%s]", s.port, modeDesc, authStatus)
-	return http.ListenAndServe(s.port, s)
+	return s.httpServer().ListenAndServe()
 }
 
 // Serve 在已创建的监听器上运行 HTTP 代理，供固定端口管理器动态启停
 func (s *Server) Serve(listener net.Listener) error {
-	return http.Serve(listener, s)
+	return s.httpServer().Serve(listener)
+}
+
+func (s *Server) httpServer() *http.Server {
+	return &http.Server{
+		Addr:              s.port,
+		Handler:           s,
+		ReadHeaderTimeout: time.Duration(s.cfg.ValidateTimeout) * time.Second,
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

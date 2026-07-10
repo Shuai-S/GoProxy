@@ -43,6 +43,7 @@ func (m *FixedPortManager) Apply(bindings []config.FixedPortBinding) {
 
 	wanted := make(map[int]config.FixedPortBinding, len(bindings))
 	for _, binding := range bindings {
+		binding.Protocol = "" // 兼容旧配置，固定端口始终启用双协议
 		wanted[binding.Port] = binding
 	}
 
@@ -79,14 +80,9 @@ func (m *FixedPortManager) startLocked(binding config.FixedPortBinding) {
 		listener: listener,
 	}
 
-	log.Printf("[fixed] 端口 %d 已绑定 %s [%s]", binding.Port, binding.ProxyAddress, binding.Protocol)
+	log.Printf("[fixed] 端口 %d 已绑定 %s [HTTP+SOCKS5]", binding.Port, binding.ProxyAddress)
 	go func() {
-		var serveErr error
-		if binding.Protocol == "socks5" {
-			serveErr = NewSOCKS5Fixed(m.storage, m.cfg, addr, binding.ProxyAddress).Serve(listener)
-		} else {
-			serveErr = NewFixed(m.storage, m.cfg, addr, binding.ProxyAddress).Serve(listener)
-		}
+		serveErr := NewMultiplexedFixed(m.storage, m.cfg, addr, binding.ProxyAddress).Serve(listener)
 		if serveErr != nil && !errors.Is(serveErr, net.ErrClosed) && !errors.Is(serveErr, http.ErrServerClosed) {
 			log.Printf("[fixed] 端口 %d 服务异常退出: %v", binding.Port, serveErr)
 		}

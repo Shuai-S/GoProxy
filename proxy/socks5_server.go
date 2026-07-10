@@ -81,6 +81,12 @@ func (s *SOCKS5Server) Serve(listener net.Listener) error {
 func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
 
+	// 握手与请求阶段使用有限超时，成功建立上游后清除，不影响长连接。
+	handshakeTimeout := time.Duration(s.cfg.ValidateTimeout) * time.Second
+	if handshakeTimeout > 0 {
+		_ = clientConn.SetDeadline(time.Now().Add(handshakeTimeout))
+	}
+
 	// SOCKS5 握手
 	if err := s.socks5Handshake(clientConn); err != nil {
 		log.Printf("[socks5] handshake failed: %v", err)
@@ -125,6 +131,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 			upstreamConn.Close()
 			return
 		}
+		_ = clientConn.SetDeadline(time.Time{})
 
 		s.storage.RecordProxyUse(p.Address, true)
 		log.Printf("[socks5] %s via %s established", target, p.Address)
@@ -183,29 +190,22 @@ func (s *SOCKS5Server) selectSOCKS5Proxy(tried []string) (*storage.Proxy, error)
 
 // socks5Handshake 处理 SOCKS5 握手
 func (s *SOCKS5Server) socks5Handshake(conn net.Conn) error {
-	buf := make([]byte, 257)
-
 	// 读取客户端问候: [VER(1), NMETHODS(1), METHODS(1-255)]
-	n, err := io.ReadAtLeast(conn, buf, 2)
-	if err != nil {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(conn, header); err != nil {
 		return err
 	}
-
-	version := buf[0]
-	if version != 0x05 {
-		return fmt.Errorf("unsupported SOCKS version: %d", version)
+	if header[0] != 0x05 {
+		return fmt.Errorf("unsupported SOCKS version: %d", header[0])
 	}
 
-	nmethods := int(buf[1])
-	if n < 2+nmethods {
-		if _, err := io.ReadFull(conn, buf[n:2+nmethods]); err != nil {
-			return err
-		}
+	methods := make([]byte, int(header[1]))
+	if _, err := io.ReadFull(conn, methods); err != nil {
+		return err
 	}
 
 	// 检查是否需要认证
 	needAuth := s.cfg.ProxyAuthEnabled
-	methods := buf[2 : 2+nmethods]
 
 	// 选择认证方式
 	var selectedMethod byte = 0xFF // No acceptable methods
@@ -248,47 +248,31 @@ func (s *SOCKS5Server) socks5Handshake(conn net.Conn) error {
 
 // socks5Auth 处理 SOCKS5 用户名/密码认证
 func (s *SOCKS5Server) socks5Auth(conn net.Conn) error {
-	buf := make([]byte, 513)
-
 	// 读取认证请求: [VER(1), ULEN(1), UNAME(1-255), PLEN(1), PASSWD(1-255)]
-	n, err := io.ReadAtLeast(conn, buf, 2)
-	if err != nil {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return err
+	}
+	if header[0] != 0x01 {
+		return fmt.Errorf("unsupported auth version: %d", header[0])
+	}
+
+	usernameBytes := make([]byte, int(header[1]))
+	if _, err := io.ReadFull(conn, usernameBytes); err != nil {
 		return err
 	}
 
-	if buf[0] != 0x01 {
-		return fmt.Errorf("unsupported auth version: %d", buf[0])
+	passwordLength := make([]byte, 1)
+	if _, err := io.ReadFull(conn, passwordLength); err != nil {
+		return err
 	}
-
-	ulen := int(buf[1])
-	if n < 2+ulen {
-		if _, err := io.ReadFull(conn, buf[n:2+ulen]); err != nil {
-			return err
-		}
-		n = 2 + ulen
+	passwordBytes := make([]byte, int(passwordLength[0]))
+	if _, err := io.ReadFull(conn, passwordBytes); err != nil {
+		return err
 	}
-
-	username := string(buf[2 : 2+ulen])
-
-	// 读取密码长度和密码
-	if n < 2+ulen+1 {
-		if _, err := io.ReadFull(conn, buf[n:2+ulen+1]); err != nil {
-			return err
-		}
-		n = 2 + ulen + 1
-	}
-
-	plen := int(buf[2+ulen])
-	if n < 2+ulen+1+plen {
-		if _, err := io.ReadFull(conn, buf[n:2+ulen+1+plen]); err != nil {
-			return err
-		}
-	}
-
-	password := string(buf[2+ulen+1 : 2+ulen+1+plen])
 
 	// 验证用户名和密码
-	if username != s.cfg.ProxyAuthUsername || password != s.cfg.ProxyAuthPassword {
+	if string(usernameBytes) != s.cfg.ProxyAuthUsername || string(passwordBytes) != s.cfg.ProxyAuthPassword {
 		// 认证失败: [VER(1), STATUS(1)]
 		conn.Write([]byte{0x01, 0x01})
 		return fmt.Errorf("authentication failed")
@@ -304,69 +288,54 @@ func (s *SOCKS5Server) socks5Auth(conn net.Conn) error {
 
 // readSOCKS5Request 读取 SOCKS5 请求
 func (s *SOCKS5Server) readSOCKS5Request(conn net.Conn) (string, error) {
-	buf := make([]byte, 262)
-
-	// 读取请求: [VER(1), CMD(1), RSV(1), ATYP(1), DST.ADDR(variable), DST.PORT(2)]
-	n, err := io.ReadAtLeast(conn, buf, 4)
-	if err != nil {
+	// 读取请求头: [VER(1), CMD(1), RSV(1), ATYP(1)]
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(conn, header); err != nil {
 		return "", err
 	}
-
-	if buf[0] != 0x05 {
-		return "", fmt.Errorf("invalid version: %d", buf[0])
+	if header[0] != 0x05 {
+		return "", fmt.Errorf("invalid version: %d", header[0])
 	}
-
-	cmd := buf[1]
-	if cmd != 0x01 { // 只支持 CONNECT
+	if header[1] != 0x01 { // 只支持 CONNECT
 		s.sendSOCKS5Reply(conn, 0x07) // Command not supported
-		return "", fmt.Errorf("unsupported command: %d", cmd)
+		return "", fmt.Errorf("unsupported command: %d", header[1])
 	}
 
-	atyp := buf[3]
 	var host string
-	var addrLen int
-
-	switch atyp {
+	switch header[3] {
 	case 0x01: // IPv4
-		addrLen = 4
-		if n < 4+addrLen+2 {
-			if _, err := io.ReadFull(conn, buf[n:4+addrLen+2]); err != nil {
-				return "", err
-			}
+		address := make([]byte, net.IPv4len)
+		if _, err := io.ReadFull(conn, address); err != nil {
+			return "", err
 		}
-		host = fmt.Sprintf("%d.%d.%d.%d", buf[4], buf[5], buf[6], buf[7])
+		host = net.IP(address).String()
 	case 0x03: // Domain name
-		addrLen = int(buf[4])
-		if n < 4+1+addrLen+2 {
-			if _, err := io.ReadFull(conn, buf[n:4+1+addrLen+2]); err != nil {
-				return "", err
-			}
+		length := make([]byte, 1)
+		if _, err := io.ReadFull(conn, length); err != nil {
+			return "", err
 		}
-		host = string(buf[5 : 5+addrLen])
+		address := make([]byte, int(length[0]))
+		if _, err := io.ReadFull(conn, address); err != nil {
+			return "", err
+		}
+		host = string(address)
 	case 0x04: // IPv6
-		addrLen = 16
-		if n < 4+addrLen+2 {
-			if _, err := io.ReadFull(conn, buf[n:4+addrLen+2]); err != nil {
-				return "", err
-			}
+		address := make([]byte, net.IPv6len)
+		if _, err := io.ReadFull(conn, address); err != nil {
+			return "", err
 		}
-		// 简化处理，直接转换
-		host = net.IP(buf[4 : 4+addrLen]).String()
+		host = net.IP(address).String()
 	default:
 		s.sendSOCKS5Reply(conn, 0x08) // Address type not supported
-		return "", fmt.Errorf("unsupported address type: %d", atyp)
+		return "", fmt.Errorf("unsupported address type: %d", header[3])
 	}
 
-	// 读取端口
-	portOffset := 4
-	if atyp == 0x03 {
-		portOffset = 5 + addrLen
-	} else {
-		portOffset = 4 + addrLen
+	portBytes := make([]byte, 2)
+	if _, err := io.ReadFull(conn, portBytes); err != nil {
+		return "", err
 	}
-	port := binary.BigEndian.Uint16(buf[portOffset : portOffset+2])
-
-	return fmt.Sprintf("%s:%d", host, port), nil
+	port := binary.BigEndian.Uint16(portBytes)
+	return net.JoinHostPort(host, fmt.Sprintf("%d", port)), nil
 }
 
 // sendSOCKS5Reply 发送 SOCKS5 响应

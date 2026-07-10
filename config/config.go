@@ -28,16 +28,14 @@ type Config struct {
 	// WebUI 密码 SHA256 哈希
 	WebUIPasswordHash string
 
-	// 代理池本地监听端口（随机轮换模式）
+	// 双协议代理端口（HTTP + SOCKS5，随机轮换模式）
 	ProxyPort string
 
-	// 稳定代理端口（最低延迟模式）
+	// 双协议稳定端口（HTTP + SOCKS5，最低延迟模式）
 	StableProxyPort string
 
-	// SOCKS5 服务端口（随机轮换模式）
-	SOCKS5Port string
-
-	// 稳定 SOCKS5 端口（最低延迟模式）
+	// 兼容旧接口，分别指向 ProxyPort 和 StableProxyPort，不再单独监听
+	SOCKS5Port       string
 	StableSOCKS5Port string
 
 	// 代理服务认证配置
@@ -112,12 +110,12 @@ type Config struct {
 	SOCKS5SourceURL string
 }
 
-// FixedPortBinding 固定端口绑定：本地端口 → 指定上游代理
+// FixedPortBinding 固定端口绑定：本地双协议端口 → 指定上游代理
 type FixedPortBinding struct {
-	Name         string `json:"name"`          // 标签名称（可选）
-	Port         int    `json:"port"`          // 本地监听端口，如 7781
-	Protocol     string `json:"protocol"`      // 本地协议: "http" 或 "socks5"
-	ProxyAddress string `json:"proxy_address"` // 绑定的上游代理地址（host:port）
+	Name         string `json:"name"`               // 标签名称（可选）
+	Port         int    `json:"port"`               // 本地监听端口，如 7779
+	Protocol     string `json:"protocol,omitempty"` // 兼容旧配置，运行时忽略
+	ProxyAddress string `json:"proxy_address"`      // 绑定的上游代理地址（host:port）
 }
 
 var (
@@ -191,8 +189,8 @@ func DefaultConfig() *Config {
 		WebUIPasswordHash: passwordHash(password),
 		ProxyPort:         ":7777",
 		StableProxyPort:   ":7776",
-		SOCKS5Port:        ":7779",
-		StableSOCKS5Port:  ":7780",
+		SOCKS5Port:        ":7777",
+		StableSOCKS5Port:  ":7776",
 		DBPath:            dataDir() + "proxy.db",
 
 		// 代理认证配置
@@ -350,9 +348,9 @@ func Load() *Config {
 				cfg.SingBoxBasePort = saved.SingBoxBasePort
 			}
 
-			// 固定端口绑定配置
+			// 固定端口绑定配置（旧 protocol 字段仅兼容读取）
 			if saved.FixedPorts != nil {
-				cfg.FixedPorts = saved.FixedPorts
+				cfg.FixedPorts = normalizeFixedPorts(saved.FixedPorts)
 			}
 		}
 	}
@@ -416,6 +414,11 @@ type savedConfig struct {
 
 // Save 保存配置到文件，并更新内存配置
 func Save(cfg *Config) error {
+	normalizedFixedPorts := normalizeFixedPorts(cfg.FixedPorts)
+	cfg.FixedPorts = normalizedFixedPorts
+	cfg.SOCKS5Port = cfg.ProxyPort
+	cfg.StableSOCKS5Port = cfg.StableProxyPort
+
 	cfgMu.Lock()
 	*globalCfg = *cfg
 	cfgMu.Unlock()
@@ -444,7 +447,7 @@ func Save(cfg *Config) error {
 		CustomRefreshInterval: cfg.CustomRefreshInterval,
 		SingBoxPath:           cfg.SingBoxPath,
 		SingBoxBasePort:       cfg.SingBoxBasePort,
-		FixedPorts:            cfg.FixedPorts,
+		FixedPorts:            normalizeFixedPorts(cfg.FixedPorts),
 		FetchInterval:         cfg.FetchInterval,
 		CheckInterval:         cfg.CheckInterval,
 	}, "", "  ")
@@ -468,6 +471,18 @@ func (c *Config) CalculateSlots() (httpSlots, socks5Slots int) {
 	}
 
 	return
+}
+
+func normalizeFixedPorts(bindings []FixedPortBinding) []FixedPortBinding {
+	if bindings == nil {
+		return nil
+	}
+	normalized := make([]FixedPortBinding, len(bindings))
+	copy(normalized, bindings)
+	for i := range normalized {
+		normalized[i].Protocol = ""
+	}
+	return normalized
 }
 
 // GetLatencyThreshold 根据池子状态返回合适的延迟阈值

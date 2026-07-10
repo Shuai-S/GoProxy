@@ -83,13 +83,9 @@ func main() {
 		totalDeleted += int(deleted)
 	}
 
-	// 创建 HTTP 代理服务器：随机轮换 + 最低延迟
-	randomServer := proxy.New(store, cfg, "random", cfg.ProxyPort)
-	stableServer := proxy.New(store, cfg, "lowest-latency", cfg.StableProxyPort)
-
-	// 创建 SOCKS5 代理服务器：随机轮换 + 最低延迟
-	socks5RandomServer := proxy.NewSOCKS5(store, cfg, "random", cfg.SOCKS5Port)
-	socks5StableServer := proxy.NewSOCKS5(store, cfg, "lowest-latency", cfg.StableSOCKS5Port)
+	// 创建双协议代理服务器：7777 随机轮换，7776 最低延迟
+	randomServer := proxy.NewMultiplexed(store, cfg, "random", cfg.ProxyPort)
+	stableServer := proxy.NewMultiplexed(store, cfg, "lowest-latency", cfg.StableProxyPort)
 
 	// 创建固定端口管理器并应用已保存的绑定
 	fixedPortMgr := proxy.NewFixedPortManager(store, cfg)
@@ -133,30 +129,16 @@ func main() {
 	// 监听配置变更
 	go watchConfigChanges(configChanged, poolMgr, fixedPortMgr)
 
-	// 启动 HTTP 稳定代理服务（最低延迟模式）
+	// 启动双协议稳定代理服务（最低延迟模式）
 	go func() {
 		if err := stableServer.Start(); err != nil {
-			log.Fatalf("stable http proxy server: %v", err)
+			log.Fatalf("stable multiplexed proxy server: %v", err)
 		}
 	}()
 
-	// 启动 SOCKS5 稳定代理服务（最低延迟模式）
-	go func() {
-		if err := socks5StableServer.Start(); err != nil {
-			log.Fatalf("stable socks5 proxy server: %v", err)
-		}
-	}()
-
-	// 启动 SOCKS5 随机代理服务
-	go func() {
-		if err := socks5RandomServer.Start(); err != nil {
-			log.Fatalf("random socks5 proxy server: %v", err)
-		}
-	}()
-
-	// 启动 HTTP 随机代理服务（阻塞）
+	// 启动双协议随机代理服务（阻塞）
 	if err := randomServer.Start(); err != nil {
-		log.Fatalf("random http proxy server: %v", err)
+		log.Fatalf("random multiplexed proxy server: %v", err)
 	}
 }
 

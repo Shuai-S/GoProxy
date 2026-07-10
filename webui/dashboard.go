@@ -66,9 +66,11 @@ body::after{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backgr
 .proxy-copy-btn{height:26px;border:1px solid var(--border);background:var(--bg-card);color:var(--fg-dim);cursor:pointer;font-size:10px;font-family:var(--mono);transition:all 0.2s}
 .proxy-copy-btn:hover{background:var(--border);color:var(--fg);box-shadow:0 0 8px var(--border)}
 .fixed-port-header{display:flex;align-items:center;gap:6px;min-width:0}
-.fixed-port-endpoint{min-width:0;max-width:58%;margin-left:auto;display:flex;align-items:center;gap:6px}
-.fixed-port-address{min-width:0;color:var(--yellow);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
-.fixed-port-endpoint .proxy-copy-btn{width:28px;flex:0 0 28px}
+.fixed-port-endpoints{display:flex;flex-direction:column;gap:5px;margin:7px 0}
+.fixed-port-endpoint{display:grid;grid-template-columns:46px minmax(0,1fr) 28px;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg);padding:4px 5px}
+.fixed-port-endpoint-label{color:var(--fg-dim);font-size:8px;text-transform:uppercase}
+.fixed-port-address{min-width:0;color:var(--yellow);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fixed-port-endpoint .proxy-copy-btn{width:28px;height:24px}
 .fixed-port-upstream{display:flex;align-items:center;gap:6px;min-width:0;margin:4px 0}
 .fixed-port-upstream-address{min-width:0;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fixed-port-upstream .subscription-badge{flex:0 1 auto}
@@ -550,15 +552,8 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
         </div>
         <div class="form-group">
           <label data-i18n="fixed.port">监听端口</label>
-          <input type="number" id="fixed-port" min="1025" max="65535" value="7781">
-          <div class="form-help" data-i18n="fixed.port_help">避开系统端口 7776-7780</div>
-        </div>
-        <div class="form-group" style="grid-column:1/-1">
-          <label data-i18n="fixed.protocol">本地协议</label>
-          <select id="fixed-protocol" style="width:100%;padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--fg);font-family:var(--mono);font-size:12px">
-            <option value="http">HTTP</option>
-            <option value="socks5">SOCKS5</option>
-          </select>
+          <input type="number" id="fixed-port" min="1025" max="65535" value="7779">
+          <div class="form-help" data-i18n="fixed.port_help">端口将同时支持 HTTP 和 SOCKS5，避开系统端口 7776-7778</div>
         </div>
         <div class="form-group" style="grid-column:1/-1">
           <label data-i18n="fixed.upstream">上游节点</label>
@@ -719,10 +714,10 @@ const i18n = {
     'actions.refresh': '刷新延迟',
     'actions.config': '配置池子',
     'control.proxy_config': '代理配置地址',
-    'control.http_random': 'HTTP随机',
-    'control.http_stable': 'HTTP稳定',
-    'control.socks_random': 'SOCKS随机',
-    'control.socks_stable': 'SOCKS稳定',
+    'control.http_random': 'HTTP随机 · 7777',
+    'control.http_stable': 'HTTP稳定 · 7776',
+    'control.socks_random': 'SOCKS随机 · 7777',
+    'control.socks_stable': 'SOCKS稳定 · 7776',
     'proxy.title': '代理列表',
     'proxy.tab_all': '全部',
     'proxy.filter_protocol': '协议',
@@ -754,8 +749,7 @@ const i18n = {
     'fixed.modal_title': '固定端口绑定',
     'fixed.name': '名称',
     'fixed.port': '监听端口',
-    'fixed.port_help': '端口范围 1025-65535，避开系统端口 7776-7780',
-    'fixed.protocol': '本地协议',
+    'fixed.port_help': '端口范围 1025-65535，同时支持 HTTP 和 SOCKS5，避开系统端口 7776-7778',
     'fixed.upstream': '上游节点',
     'fixed.search_placeholder': '搜索地址、协议、出口 IP、位置或订阅',
     'fixed.no_results': '未找到匹配节点',
@@ -913,10 +907,10 @@ const i18n = {
     'actions.refresh': 'Refresh Latency',
     'actions.config': 'Configure Pool',
     'control.proxy_config': 'Proxy Config Addresses',
-    'control.http_random': 'HTTP Random',
-    'control.http_stable': 'HTTP Stable',
-    'control.socks_random': 'SOCKS Random',
-    'control.socks_stable': 'SOCKS Stable',
+    'control.http_random': 'HTTP Random · 7777',
+    'control.http_stable': 'HTTP Stable · 7776',
+    'control.socks_random': 'SOCKS Random · 7777',
+    'control.socks_stable': 'SOCKS Stable · 7776',
     'proxy.title': 'Proxy Registry',
     'proxy.tab_all': 'All',
     'proxy.filter_protocol': 'Protocol',
@@ -948,8 +942,7 @@ const i18n = {
     'fixed.modal_title': 'Fixed Port Binding',
     'fixed.name': 'Name',
     'fixed.port': 'Listen Port',
-    'fixed.port_help': 'Range 1025-65535; avoid system ports 7776-7780',
-    'fixed.protocol': 'Local Protocol',
+    'fixed.port_help': 'Range 1025-65535, supports HTTP and SOCKS5; avoid system ports 7776-7778',
     'fixed.upstream': 'Upstream Node',
     'fixed.search_placeholder': 'Search address, protocol, exit IP, location, or subscription',
     'fixed.no_results': 'No matching nodes',
@@ -1271,8 +1264,8 @@ function renderProxyConfig(cfg) {
   const items = [
     {label: t('control.http_random'), value: 'http://' + host + ':' + normalizePort(cfg.proxy_port)},
     {label: t('control.http_stable'), value: 'http://' + host + ':' + normalizePort(cfg.stable_proxy_port)},
-    {label: t('control.socks_random'), value: 'socks5://' + host + ':' + normalizePort(cfg.socks5_port)},
-    {label: t('control.socks_stable'), value: 'socks5://' + host + ':' + normalizePort(cfg.stable_socks5_port)}
+    {label: t('control.socks_random'), value: 'socks5://' + host + ':' + normalizePort(cfg.proxy_port)},
+    {label: t('control.socks_stable'), value: 'socks5://' + host + ':' + normalizePort(cfg.stable_proxy_port)}
   ];
 
   el.innerHTML = items.map(item =>
@@ -1305,18 +1298,19 @@ function renderFixedPorts() {
     const color = active ? 'var(--green)' : 'var(--red)';
     const status = active ? t('fixed.active') : t('fixed.unavailable');
     const detail = proxy ? ((proxy.exit_ip || '—') + ' · ' + (proxy.exit_location || '—')) : status;
-    const endpoint = binding.protocol + '://' + proxyHost() + ':' + binding.port;
+    const httpEndpoint = 'http://' + proxyHost() + ':' + binding.port;
+    const socksEndpoint = 'socks5://' + proxyHost() + ':' + binding.port;
     const subscriptionName = proxy && proxy.source === 'custom' ? (subNameMap[proxy.subscription_id] || t('fixed.subscription')) : '';
     const subscriptionBadge = subscriptionName ? '<span class="subscription-badge" title="' + esc(subscriptionName) + '">' + esc(subscriptionName) + '</span>' : '';
     return '<div style="border-bottom:1px solid var(--border);padding:7px 0">' +
       '<div class="fixed-port-header">' +
         '<span style="color:' + color + '">●</span>' +
         '<strong style="color:var(--fg)">' + esc(binding.name || ('PORT ' + binding.port)) + '</strong>' +
-        '<span class="badge badge-' + binding.protocol + '" style="padding:1px 5px">' + binding.protocol.toUpperCase() + '</span>' +
-        '<div class="fixed-port-endpoint">' +
-          '<span class="fixed-port-address" title="' + esc(endpoint) + '">' + esc(endpoint) + '</span>' +
-          '<button class="proxy-copy-btn" type="button" onclick="copyToClipboard(\'' + jsString(endpoint) + '\')" title="Copy">⧉</button>' +
-        '</div>' +
+        '<span class="badge badge-http" style="padding:1px 5px">HTTP+SOCKS5</span>' +
+      '</div>' +
+      '<div class="fixed-port-endpoints">' +
+        renderFixedEndpoint('HTTP', httpEndpoint) +
+        renderFixedEndpoint('SOCKS5', socksEndpoint) +
       '</div>' +
       '<div class="fixed-port-upstream" title="' + esc(binding.proxy_address) + '">' +
         '<span class="fixed-port-upstream-address">' + esc(binding.proxy_address) + '</span>' + subscriptionBadge +
@@ -1330,9 +1324,17 @@ function renderFixedPorts() {
   }).join('');
 }
 
+function renderFixedEndpoint(label, endpoint) {
+  return '<div class="fixed-port-endpoint">' +
+    '<span class="fixed-port-endpoint-label">' + label + '</span>' +
+    '<span class="fixed-port-address" title="' + esc(endpoint) + '">' + esc(endpoint) + '</span>' +
+    '<button class="proxy-copy-btn" type="button" onclick="copyToClipboard(\'' + jsString(endpoint) + '\')" title="Copy">⧉</button>' +
+  '</div>';
+}
+
 function nextFixedPort() {
   const used = new Set(fixedPorts.map(b => Number(b.port)));
-  let port = 7781;
+  let port = 7779;
   while (used.has(port)) port++;
   return port;
 }
@@ -1468,7 +1470,6 @@ function openFixedPortModal(index) {
   const binding = editingFixedPort >= 0 ? fixedPorts[editingFixedPort] : null;
   document.getElementById('fixed-name').value = binding ? (binding.name || '') : '';
   document.getElementById('fixed-port').value = binding ? binding.port : nextFixedPort();
-  document.getElementById('fixed-protocol').value = binding ? binding.protocol : 'http';
   populateFixedProxyOptions(binding ? binding.proxy_address : '');
   document.getElementById('fixed-port-modal').style.display = 'flex';
 }
@@ -1488,7 +1489,6 @@ async function saveFixedPort() {
   const binding = {
     name: document.getElementById('fixed-name').value.trim(),
     port: port,
-    protocol: document.getElementById('fixed-protocol').value,
     proxy_address: proxyAddress
   };
   const next = fixedPorts.slice();

@@ -24,7 +24,7 @@ CGO is required (`CGO_ENABLED=1`) because of the `github.com/mattn/go-sqlite3` d
 
 ## Testing
 
-There are no Go unit tests (`go test ./...`). Testing is done via shell scripts against a running instance:
+There are focused Go tests (`go test ./...`) plus shell scripts against a running instance:
 
 ```bash
 # HTTP proxy test (continuous, Ctrl+C to stop)
@@ -35,9 +35,9 @@ There are no Go unit tests (`go test ./...`). Testing is done via shell scripts 
 ./test/test_http_https.sh           # port 7777, continuous
 ./test/test_http_https.sh 7776 20   # port 7776, 20 iterations
 
-# SOCKS5 proxy test
-./test/test_socks5.sh localhost 7779      # random
-./test/test_socks5.sh localhost 7780 50   # stable, 50 iterations
+# SOCKS5 proxy test (shares the same strategy ports as HTTP)
+./test/test_socks5.sh 7777      # random
+./test/test_socks5.sh 7776      # stable
 
 # Go/Python test scripts
 go run test/test_proxy.go 7777
@@ -64,8 +64,10 @@ main.go (orchestrator)
   │   ├── singbox.go  — sing-box process manager (config generation, start/stop/reload)
   │   └── manager.go  — Subscription refresh loop + probe-wake loop for disabled proxies
   ├── proxy/      — Outward-facing proxy servers
-  │   ├── server.go       — HTTP proxy (implements http.Handler)
-  │   └── socks5_server.go — SOCKS5 proxy (raw TCP, manual protocol implementation)
+  │   ├── multiplexed_server.go — HTTP/SOCKS5 protocol multiplexer
+  │   ├── server.go             — HTTP proxy (implements http.Handler)
+  │   ├── socks5_server.go      — SOCKS5 proxy (raw TCP, manual protocol implementation)
+  │   └── fixedport.go          — Dynamic fixed-node dual-protocol ports
   ├── webui/      — Dashboard server (embedded HTML in html.go, API in dashboard.go)
   └── logger/     — In-memory log collector for WebUI display
 ```
@@ -92,11 +94,10 @@ main.go (orchestrator)
 
 | Port | Service |
 |------|---------|
-| 7776 | HTTP proxy (lowest-latency mode) |
-| 7777 | HTTP proxy (random rotation mode) |
+| 7776 | HTTP + SOCKS5 proxy (lowest-latency mode) |
+| 7777 | HTTP + SOCKS5 proxy (random rotation mode) |
 | 7778 | WebUI dashboard |
-| 7779 | SOCKS5 proxy (random rotation mode) |
-| 7780 | SOCKS5 proxy (lowest-latency mode) |
+| 7779+ | HTTP + SOCKS5 fixed-node bindings (configured in WebUI) |
 
 ### Configuration
 

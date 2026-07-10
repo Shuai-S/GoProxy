@@ -31,6 +31,7 @@ WORKDIR /app
 COPY --from=builder /app/proxy-pool .
 COPY --from=builder /app/sing-box /usr/local/bin/sing-box
 
+# 7776/7777 为双协议策略端口，7779/7780 为默认固定端口槽位
 EXPOSE 7776 7777 7778 7779 7780
 
 CMD ["./proxy-pool"]

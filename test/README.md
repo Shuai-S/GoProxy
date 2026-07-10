@@ -28,11 +28,11 @@
 
 **SOCKS5 代理测试**：
 ```bash
-# 测试 7779 端口（随机轮换）
-./test/test_socks5.sh 7779
+# 测试 7777 端口（与 HTTP 共用，随机轮换）
+./test/test_socks5.sh 7777
 
-# 测试 7780 端口（最低延迟）
-./test/test_socks5.sh 7780
+# 测试 7776 端口（与 HTTP 共用，最低延迟）
+./test/test_socks5.sh 7776
 
 # 按 Ctrl+C 停止并查看统计
 ```
@@ -96,16 +96,17 @@ python test/test_proxy.py
 ### SOCKS5 代理端口对比
 
 ```bash
-# 随机轮换模式 - IP 高度分散
-./test/test_socks5.sh 7779
+# 随机轮换模式 - 与 HTTP 随机共用 7777
+./test/test_socks5.sh 7777
 
-# 最低延迟模式 - 固定使用最快代理
-./test/test_socks5.sh 7780
+# 最低延迟模式 - 与 HTTP 稳定共用 7776
+./test/test_socks5.sh 7776
 ```
 
 **观察要点**：
-- **7779 端口**：每次连接的出口 IP 应该不同
-- **7780 端口**：连续多次连接的出口 IP 基本相同
+- **7777 端口**：每次连接的出口 IP 应该不同
+- **7776 端口**：连续多次连接的出口 IP 基本相同
+- 同一个端口也可通过 `test_proxy.sh` 测试 HTTP 入口协议
 
 > 💡 **提示**：SOCKS5 测试脚本使用 `-k` 参数跳过 SSL 证书验证，因为免费上游代理常有证书问题。生产环境建议使用质量更好的付费代理。
 
