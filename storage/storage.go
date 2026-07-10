@@ -539,6 +539,26 @@ func (s *Storage) Delete(address string) error {
 	return err
 }
 
+// GetByAddress 按地址查询单个代理（含完整字段），用于固定端口绑定
+// 仅返回 active/degraded 状态的代理，其他状态或不存在则返回 error
+func (s *Storage) GetByAddress(address string) (*Proxy, error) {
+	rows, err := s.db.Query(
+		`SELECT `+proxyColumns+`
+		 FROM proxies
+		 WHERE address = ? AND status IN ('active', 'degraded')`,
+		address,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		return scanProxy(rows)
+	}
+	return nil, fmt.Errorf("proxy %s not available", address)
+}
+
 // IncrFail 增加失败次数
 func (s *Storage) IncrFail(address string) error {
 	_, err := s.db.Exec(

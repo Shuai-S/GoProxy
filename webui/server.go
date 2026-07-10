@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -425,6 +427,7 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 		"stable_proxy_port":  cfg.StableProxyPort,
 		"socks5_port":        cfg.SOCKS5Port,
 		"stable_socks5_port": cfg.StableSOCKS5Port,
+		"fixed_ports":        cfg.FixedPorts,
 	})
 }
 
@@ -436,25 +439,26 @@ func (s *Server) apiConfigSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		PoolMaxSize           int      `json:"pool_max_size"`
-		PoolHTTPRatio         float64  `json:"pool_http_ratio"`
-		PoolMinPerProtocol    int      `json:"pool_min_per_protocol"`
-		MaxLatencyMs          int      `json:"max_latency_ms"`
-		MaxLatencyEmergency   int      `json:"max_latency_emergency"`
-		MaxLatencyHealthy     int      `json:"max_latency_healthy"`
-		ValidateConcurrency   int      `json:"validate_concurrency"`
-		ValidateTimeout       int      `json:"validate_timeout"`
-		HealthCheckInterval   int      `json:"health_check_interval"`
-		HealthCheckBatchSize  int      `json:"health_check_batch_size"`
-		OptimizeInterval      int      `json:"optimize_interval"`
-		ReplaceThreshold      float64  `json:"replace_threshold"`
-		BlockedCountries      []string `json:"blocked_countries"`
-		AllowedCountries      []string `json:"allowed_countries"`
-		CustomProxyMode       string   `json:"custom_proxy_mode"`
-		CustomPriority        *bool    `json:"custom_priority"`
-		CustomFreePriority    *bool    `json:"custom_free_priority"`
-		CustomProbeInterval   int      `json:"custom_probe_interval"`
-		CustomRefreshInterval int      `json:"custom_refresh_interval"`
+		PoolMaxSize           int                       `json:"pool_max_size"`
+		PoolHTTPRatio         float64                   `json:"pool_http_ratio"`
+		PoolMinPerProtocol    int                       `json:"pool_min_per_protocol"`
+		MaxLatencyMs          int                       `json:"max_latency_ms"`
+		MaxLatencyEmergency   int                       `json:"max_latency_emergency"`
+		MaxLatencyHealthy     int                       `json:"max_latency_healthy"`
+		ValidateConcurrency   int                       `json:"validate_concurrency"`
+		ValidateTimeout       int                       `json:"validate_timeout"`
+		HealthCheckInterval   int                       `json:"health_check_interval"`
+		HealthCheckBatchSize  int                       `json:"health_check_batch_size"`
+		OptimizeInterval      int                       `json:"optimize_interval"`
+		ReplaceThreshold      float64                   `json:"replace_threshold"`
+		BlockedCountries      []string                  `json:"blocked_countries"`
+		AllowedCountries      []string                  `json:"allowed_countries"`
+		CustomProxyMode       string                    `json:"custom_proxy_mode"`
+		CustomPriority        *bool                     `json:"custom_priority"`
+		CustomFreePriority    *bool                     `json:"custom_free_priority"`
+		CustomProbeInterval   int                       `json:"custom_probe_interval"`
+		CustomRefreshInterval int                       `json:"custom_refresh_interval"`
+		FixedPorts            []config.FixedPortBinding `json:"fixed_ports"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -465,6 +469,10 @@ func (s *Server) apiConfigSave(w http.ResponseWriter, r *http.Request) {
 	// 验证配置有效性
 	if req.PoolMaxSize <= 0 || req.PoolHTTPRatio <= 0 || req.PoolHTTPRatio > 1 {
 		jsonError(w, "invalid pool config", http.StatusBadRequest)
+		return
+	}
+	if err := validateFixedPorts(req.FixedPorts, config.Get()); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -510,6 +518,7 @@ func (s *Server) apiConfigSave(w http.ResponseWriter, r *http.Request) {
 	if req.CustomRefreshInterval > 0 {
 		newCfg.CustomRefreshInterval = req.CustomRefreshInterval
 	}
+	newCfg.FixedPorts = req.FixedPorts
 
 	if err := config.Save(&newCfg); err != nil {
 		jsonError(w, "save config error: "+err.Error(), http.StatusInternalServerError)
@@ -858,6 +867,47 @@ func (s *Server) apiSubscriptionToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, map[string]string{"status": "toggled"})
+}
+
+func validateFixedPorts(bindings []config.FixedPortBinding, cfg *config.Config) error {
+	reserved := make(map[int]string)
+	for label, value := range map[string]string{
+		"HTTP 随机端口":   cfg.ProxyPort,
+		"HTTP 稳定端口":   cfg.StableProxyPort,
+		"SOCKS5 随机端口": cfg.SOCKS5Port,
+		"SOCKS5 稳定端口": cfg.StableSOCKS5Port,
+		"WebUI 端口":    cfg.WebUIPort,
+	} {
+		_, portText, err := net.SplitHostPort(value)
+		if err != nil {
+			portText = strings.TrimPrefix(value, ":")
+		}
+		port, err := strconv.Atoi(portText)
+		if err == nil {
+			reserved[port] = label
+		}
+	}
+
+	seen := make(map[int]bool, len(bindings))
+	for _, binding := range bindings {
+		if binding.Port < 1025 || binding.Port > 65535 {
+			return fmt.Errorf("固定端口 %d 超出允许范围 1025-65535", binding.Port)
+		}
+		if label, exists := reserved[binding.Port]; exists {
+			return fmt.Errorf("固定端口 %d 与%s冲突", binding.Port, label)
+		}
+		if seen[binding.Port] {
+			return fmt.Errorf("固定端口 %d 重复", binding.Port)
+		}
+		seen[binding.Port] = true
+		if binding.Protocol != "http" && binding.Protocol != "socks5" {
+			return fmt.Errorf("固定端口 %d 的协议无效", binding.Port)
+		}
+		if strings.TrimSpace(binding.ProxyAddress) == "" {
+			return fmt.Errorf("固定端口 %d 未选择代理节点", binding.Port)
+		}
+	}
+	return nil
 }
 
 func jsonOK(w http.ResponseWriter, data interface{}) {

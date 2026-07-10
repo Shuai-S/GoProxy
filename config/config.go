@@ -70,8 +70,8 @@ type Config struct {
 	ValidateURL         string // 验证目标 URL
 
 	// ========== 健康检查配置 ==========
-	HealthCheckInterval   int // 状态监控间隔（分钟）（默认5）
-	HealthCheckBatchSize  int // 每批验证数量（默认20）
+	HealthCheckInterval    int // 状态监控间隔（分钟）（默认5）
+	HealthCheckBatchSize   int // 每批验证数量（默认20）
 	HealthCheckConcurrency int // 批次内并发数（默认50）
 
 	// ========== 优化配置 ==========
@@ -96,6 +96,10 @@ type Config struct {
 	SingBoxPath           string // sing-box 二进制路径（默认 "sing-box"）
 	SingBoxBasePort       int    // sing-box 本地端口起始（默认 20000）
 
+	// ========== 固定端口绑定配置 ==========
+	// 每个绑定将一个本地端口固定路由到池中某个上游代理（失效时报错不切换）
+	FixedPorts []FixedPortBinding
+
 	// ========== 兼容旧配置 ==========
 	MaxResponseMs int // 已废弃，使用 MaxLatencyMs 替代
 	MaxFailCount  int // 代理失败次数阈值
@@ -106,6 +110,14 @@ type Config struct {
 	// 代理来源 URL（已废弃，内置多源）
 	HTTPSourceURL   string
 	SOCKS5SourceURL string
+}
+
+// FixedPortBinding 固定端口绑定：本地端口 → 指定上游代理
+type FixedPortBinding struct {
+	Name         string `json:"name"`          // 标签名称（可选）
+	Port         int    `json:"port"`          // 本地监听端口，如 7781
+	Protocol     string `json:"protocol"`      // 本地协议: "http" 或 "socks5"
+	ProxyAddress string `json:"proxy_address"` // 绑定的上游代理地址（host:port）
 }
 
 var (
@@ -123,7 +135,7 @@ func DefaultConfig() *Config {
 	if password == "" {
 		password = DefaultPassword
 	}
-	
+
 	// 读取代理认证配置
 	proxyAuthEnabled := os.Getenv("PROXY_AUTH_ENABLED") == "true"
 	proxyAuthUsername := os.Getenv("PROXY_AUTH_USERNAME")
@@ -135,7 +147,7 @@ func DefaultConfig() *Config {
 	if proxyAuthPassword != "" {
 		proxyAuthHash = passwordHash(proxyAuthPassword)
 	}
-	
+
 	// 读取地理过滤配置
 	blockedCountries := []string{"CN"} // 默认屏蔽中国大陆
 	if blockedEnv := os.Getenv("BLOCKED_COUNTRIES"); blockedEnv != "" {
@@ -162,7 +174,7 @@ func DefaultConfig() *Config {
 			}
 		}
 	}
-	
+
 	// 读取订阅代理配置
 	customProxyMode := os.Getenv("CUSTOM_PROXY_MODE")
 	if customProxyMode == "" {
@@ -182,21 +194,21 @@ func DefaultConfig() *Config {
 		SOCKS5Port:        ":7779",
 		StableSOCKS5Port:  ":7780",
 		DBPath:            dataDir() + "proxy.db",
-		
+
 		// 代理认证配置
 		ProxyAuthEnabled:      proxyAuthEnabled,
 		ProxyAuthUsername:     proxyAuthUsername,
 		ProxyAuthPassword:     proxyAuthPassword,
 		ProxyAuthPasswordHash: proxyAuthHash,
-		
+
 		// 地理过滤配置
 		BlockedCountries: blockedCountries,
 		AllowedCountries: allowedCountries,
 
 		// 池子容量配置
-		PoolMaxSize:        100,  // 总容量
-		PoolHTTPRatio:      0.3,  // HTTP占30%
-		PoolMinPerProtocol: 10,   // 每协议最少10个
+		PoolMaxSize:        100, // 总容量
+		PoolHTTPRatio:      0.3, // HTTP占30%
+		PoolMinPerProtocol: 10,  // 每协议最少10个
 
 		// 延迟标准配置
 		MaxLatencyMs:          2500, // 标准2.5秒
@@ -236,12 +248,12 @@ func DefaultConfig() *Config {
 		SingBoxBasePort:       20000,
 
 		// 兼容旧配置
-		MaxResponseMs: 5000,
-		MaxFailCount:  3,
-		MaxRetry:      3,
-		FetchInterval: 30,
-		CheckInterval: 10,
-		HTTPSourceURL: "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/http.txt",
+		MaxResponseMs:   5000,
+		MaxFailCount:    3,
+		MaxRetry:        3,
+		FetchInterval:   30,
+		CheckInterval:   10,
+		HTTPSourceURL:   "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/http.txt",
 		SOCKS5SourceURL: "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/socks5.txt",
 	}
 }
@@ -337,6 +349,11 @@ func Load() *Config {
 			if saved.SingBoxBasePort > 0 {
 				cfg.SingBoxBasePort = saved.SingBoxBasePort
 			}
+
+			// 固定端口绑定配置
+			if saved.FixedPorts != nil {
+				cfg.FixedPorts = saved.FixedPorts
+			}
 		}
 	}
 	cfgMu.Lock()
@@ -389,6 +406,9 @@ type savedConfig struct {
 	SingBoxPath           string `json:"singbox_path,omitempty"`
 	SingBoxBasePort       int    `json:"singbox_base_port,omitempty"`
 
+	// 固定端口绑定配置
+	FixedPorts []FixedPortBinding `json:"fixed_ports,omitempty"`
+
 	// 兼容旧配置
 	FetchInterval int `json:"fetch_interval,omitempty"`
 	CheckInterval int `json:"check_interval,omitempty"`
@@ -424,6 +444,7 @@ func Save(cfg *Config) error {
 		CustomRefreshInterval: cfg.CustomRefreshInterval,
 		SingBoxPath:           cfg.SingBoxPath,
 		SingBoxBasePort:       cfg.SingBoxBasePort,
+		FixedPorts:            cfg.FixedPorts,
 		FetchInterval:         cfg.FetchInterval,
 		CheckInterval:         cfg.CheckInterval,
 	}, "", "  ")

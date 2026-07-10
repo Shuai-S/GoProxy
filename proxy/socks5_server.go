@@ -15,10 +15,11 @@ import (
 
 // SOCKS5Server SOCKS5 协议服务器
 type SOCKS5Server struct {
-	storage *storage.Storage
-	cfg     *config.Config
-	mode    string // "random" 或 "lowest-latency"
-	port    string
+	storage        *storage.Storage
+	cfg            *config.Config
+	mode           string // "random"、"lowest-latency" 或 "fixed"
+	port           string
+	fixedProxyAddr string
 }
 
 // NewSOCKS5 创建 SOCKS5 服务器
@@ -31,28 +32,46 @@ func NewSOCKS5(s *storage.Storage, cfg *config.Config, mode string, port string)
 	}
 }
 
+// NewSOCKS5Fixed 创建绑定到指定上游节点的 SOCKS5 代理服务器
+func NewSOCKS5Fixed(s *storage.Storage, cfg *config.Config, port, proxyAddr string) *SOCKS5Server {
+	return &SOCKS5Server{
+		storage:        s,
+		cfg:            cfg,
+		mode:           "fixed",
+		port:           port,
+		fixedProxyAddr: proxyAddr,
+	}
+}
+
 // Start 启动 SOCKS5 服务器
 func (s *SOCKS5Server) Start() error {
 	modeDesc := "随机轮换"
 	if s.mode == "lowest-latency" {
 		modeDesc = "最低延迟"
+	} else if s.mode == "fixed" {
+		modeDesc = fmt.Sprintf("固定节点 %s", s.fixedProxyAddr)
 	}
 	authStatus := "无认证"
 	if s.cfg.ProxyAuthEnabled {
 		authStatus = fmt.Sprintf("需认证 (用户: %s)", s.cfg.ProxyAuthUsername)
 	}
 	log.Printf("socks5 server listening on %s [%s] [%s]", s.port, modeDesc, authStatus)
-	
+
 	listener, err := net.Listen("tcp", s.port)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 
+	return s.Serve(listener)
+}
+
+// Serve 在已创建的监听器上运行 SOCKS5 代理，供固定端口管理器动态启停
+func (s *SOCKS5Server) Serve(listener net.Listener) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			continue
+			return err
 		}
 		go s.handleConnection(conn)
 	}
@@ -75,11 +94,13 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	// 带重试的连接上游代理
-	// 重试机制：只使用 SOCKS5 协议的上游代理（天然支持 HTTPS）
+	// 固定端口仅尝试绑定节点一次，其他模式增加重试次数以应对质量差的代理
 	tried := []string{}
-	maxRetries := s.cfg.MaxRetry + 2 // 增加重试次数以应对质量差的代理
-	
+	maxRetries := s.cfg.MaxRetry + 2
+	if s.mode == "fixed" {
+		maxRetries = 0
+	}
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		p, err := s.selectSOCKS5Proxy(tried)
 		if err != nil {
@@ -111,7 +132,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 		// 双向转发数据
 		go io.Copy(upstreamConn, clientConn)
 		io.Copy(clientConn, upstreamConn)
-		
+
 		// 转发完成，关闭连接
 		upstreamConn.Close()
 		return
@@ -124,6 +145,10 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 
 // selectSOCKS5Proxy 根据使用模式选择 SOCKS5 上游代理
 func (s *SOCKS5Server) selectSOCKS5Proxy(tried []string) (*storage.Proxy, error) {
+	if s.mode == "fixed" {
+		return s.storage.GetByAddress(s.fixedProxyAddr)
+	}
+
 	cfg := config.Get()
 	sourceFilter := sourceFilterFromMode(cfg.CustomProxyMode)
 
@@ -349,10 +374,10 @@ func (s *SOCKS5Server) sendSOCKS5Reply(conn net.Conn, rep byte) error {
 	// [VER(1), REP(1), RSV(1), ATYP(1), BND.ADDR(variable), BND.PORT(2)]
 	// 简化：使用 0.0.0.0:0
 	reply := []byte{
-		0x05, // VER
-		rep,  // REP: 0x00=成功, 0x01=一般失败, 0x07=命令不支持, 0x08=地址类型不支持
-		0x00, // RSV
-		0x01, // ATYP: IPv4
+		0x05,       // VER
+		rep,        // REP: 0x00=成功, 0x01=一般失败, 0x07=命令不支持, 0x08=地址类型不支持
+		0x00,       // RSV
+		0x01,       // ATYP: IPv4
 		0, 0, 0, 0, // BND.ADDR: 0.0.0.0
 		0, 0, // BND.PORT: 0
 	}
@@ -363,11 +388,11 @@ func (s *SOCKS5Server) sendSOCKS5Reply(conn net.Conn, rep byte) error {
 // dialViaProxy 通过上游代理连接目标
 func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, error) {
 	timeout := time.Duration(s.cfg.ValidateTimeout) * time.Second
-	
+
 	switch p.Protocol {
 	case "http":
 		return proxyutil.DialHTTPProxyConnect(p.Address, target, timeout)
-		
+
 	case "socks5":
 		dialer, err := proxyutil.SOCKS5Dialer(p.Address)
 		if err != nil {

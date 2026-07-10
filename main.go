@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -90,6 +91,11 @@ func main() {
 	socks5RandomServer := proxy.NewSOCKS5(store, cfg, "random", cfg.SOCKS5Port)
 	socks5StableServer := proxy.NewSOCKS5(store, cfg, "lowest-latency", cfg.StableSOCKS5Port)
 
+	// 创建固定端口管理器并应用已保存的绑定
+	fixedPortMgr := proxy.NewFixedPortManager(store, cfg)
+	fixedPortMgr.Apply(cfg.FixedPorts)
+	defer fixedPortMgr.Stop()
+
 	// 初始化订阅管理器
 	customMgr := custom.NewManager(store, validate, cfg)
 
@@ -125,7 +131,7 @@ func main() {
 	go customMgr.Start()
 
 	// 监听配置变更
-	go watchConfigChanges(configChanged, poolMgr)
+	go watchConfigChanges(configChanged, poolMgr, fixedPortMgr)
 
 	// 启动 HTTP 稳定代理服务（最低延迟模式）
 	go func() {
@@ -337,13 +343,11 @@ func startStatusMonitor(poolMgr *pool.Manager, fetch *fetcher.Fetcher, validate 
 }
 
 // watchConfigChanges 监听配置变更
-func watchConfigChanges(configChanged <-chan struct{}, poolMgr *pool.Manager) {
-	var oldSize int
-	var oldRatio float64
-
+func watchConfigChanges(configChanged <-chan struct{}, poolMgr *pool.Manager, fixedPortMgr *proxy.FixedPortManager) {
 	cfg := config.Get()
-	oldSize = cfg.PoolMaxSize
-	oldRatio = cfg.PoolHTTPRatio
+	oldSize := cfg.PoolMaxSize
+	oldRatio := cfg.PoolHTTPRatio
+	oldFixedPorts := append([]config.FixedPortBinding(nil), cfg.FixedPorts...)
 
 	for range configChanged {
 		newCfg := config.Get()
@@ -353,6 +357,11 @@ func watchConfigChanges(configChanged <-chan struct{}, poolMgr *pool.Manager) {
 			poolMgr.AdjustForConfigChange(oldSize, oldRatio)
 			oldSize = newCfg.PoolMaxSize
 			oldRatio = newCfg.PoolHTTPRatio
+		}
+		if !reflect.DeepEqual(oldFixedPorts, newCfg.FixedPorts) {
+			log.Printf("[config] 固定端口配置变更: %d → %d", len(oldFixedPorts), len(newCfg.FixedPorts))
+			fixedPortMgr.Apply(newCfg.FixedPorts)
+			oldFixedPorts = append([]config.FixedPortBinding(nil), newCfg.FixedPorts...)
 		}
 	}
 }

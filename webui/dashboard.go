@@ -292,6 +292,17 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
         </div>
       </div>
 
+      <!-- 固定端口 -->
+      <div class="control-panel admin-only" style="margin-bottom:20px">
+        <div class="control-header">
+          <div class="control-title">[ FIXED_PORTS ]</div>
+        </div>
+        <div id="fixed-port-list" style="margin-bottom:8px;font-size:10px"></div>
+        <div class="control-ops">
+          <button class="ctrl-btn-primary" onclick="openFixedPortModal()" data-i18n="fixed.add">添加固定端口</button>
+        </div>
+      </div>
+
       <!-- 订阅管理面板 -->
       <div class="control-panel admin-only" style="margin-bottom:20px">
         <div class="control-header">
@@ -505,6 +516,41 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
   </div>
 </div>
 
+<!-- 固定端口弹窗 -->
+<div class="modal-overlay" id="fixed-port-modal" onclick="if(event.target===this) closeFixedPortModal()" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-title" data-i18n="fixed.modal_title">固定端口绑定</div>
+    <div class="form-section">
+      <div class="form-grid">
+        <div class="form-group">
+          <label data-i18n="fixed.name">名称</label>
+          <input type="text" id="fixed-name" placeholder="US NODE">
+        </div>
+        <div class="form-group">
+          <label data-i18n="fixed.port">监听端口</label>
+          <input type="number" id="fixed-port" min="1025" max="65535" value="7781">
+          <div class="form-help" data-i18n="fixed.port_help">避开系统端口 7776-7780</div>
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label data-i18n="fixed.protocol">本地协议</label>
+          <select id="fixed-protocol" style="width:100%;padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--fg);font-family:var(--mono);font-size:12px">
+            <option value="http">HTTP</option>
+            <option value="socks5">SOCKS5</option>
+          </select>
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label data-i18n="fixed.upstream">上游节点</label>
+          <select id="fixed-proxy" style="width:100%;padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--fg);font-family:var(--mono);font-size:11px"></select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeFixedPortModal()" data-i18n="config.cancel">取消</button>
+      <button class="btn" onclick="saveFixedPort()" data-i18n="config.save">保存配置</button>
+    </div>
+  </div>
+</div>
+
 <!-- 添加订阅弹窗 -->
 <div class="modal-overlay" id="sub-modal" onclick="if(event.target===this) closeSubModal()" style="display:none">
   <div class="modal" style="max-width:500px">
@@ -672,6 +718,22 @@ const i18n = {
     'proxy.add_manual_submitting': '添加中...',
     'proxy.manual_input': '节点列表',
     'proxy.manual_help': '每行输入一个代理，支持 socks5://user:pass@host:port、http://host:port、https://user:pass@host:port',
+    'fixed.add': '添加固定端口',
+    'fixed.modal_title': '固定端口绑定',
+    'fixed.name': '名称',
+    'fixed.port': '监听端口',
+    'fixed.port_help': '端口范围 1025-65535，避开系统端口 7776-7780',
+    'fixed.protocol': '本地协议',
+    'fixed.upstream': '上游节点',
+    'fixed.empty': '暂无固定端口',
+    'fixed.active': '正常',
+    'fixed.unavailable': '节点失效',
+    'fixed.edit': '编辑',
+    'fixed.delete': '删除',
+    'fixed.select_proxy': '请选择代理节点',
+    'fixed.invalid_port': '请输入有效端口',
+    'fixed.delete_confirm': '确定删除固定端口 {0}？',
+    'fixed.saved': '固定端口配置已保存',
     'proxy.copy_success': '已复制',
     'proxy.refresh_started': '刷新已启动',
     'log.title': '系统日志',
@@ -845,6 +907,22 @@ const i18n = {
     'proxy.add_manual_submitting': 'Adding...',
     'proxy.manual_input': 'Node List',
     'proxy.manual_help': 'One proxy per line. Supports socks5://user:pass@host:port, http://host:port, https://user:pass@host:port',
+    'fixed.add': 'Add Fixed Port',
+    'fixed.modal_title': 'Fixed Port Binding',
+    'fixed.name': 'Name',
+    'fixed.port': 'Listen Port',
+    'fixed.port_help': 'Range 1025-65535; avoid system ports 7776-7780',
+    'fixed.protocol': 'Local Protocol',
+    'fixed.upstream': 'Upstream Node',
+    'fixed.empty': 'No fixed ports',
+    'fixed.active': 'Active',
+    'fixed.unavailable': 'Node unavailable',
+    'fixed.edit': 'Edit',
+    'fixed.delete': 'Delete',
+    'fixed.select_proxy': 'Select a proxy node',
+    'fixed.invalid_port': 'Enter a valid port',
+    'fixed.delete_confirm': 'Delete fixed port {0}?',
+    'fixed.saved': 'Fixed port configuration saved',
     'proxy.copy_success': 'Copied',
     'proxy.refresh_started': 'Refresh started',
     'log.title': 'System Log',
@@ -1017,6 +1095,8 @@ if (savedLang) {
 let currentProtocol = '';
 let currentCountry = '';
 let allProxies = [];
+let fixedPorts = [];
+let editingFixedPort = -1;
 let isAdmin = false; // 是否为管理员
 
 async function api(path, opts) {
@@ -1155,6 +1235,118 @@ function renderProxyConfig(cfg) {
 async function loadProxyConfig() {
   const cfg = await api('/api/config');
   renderProxyConfig(cfg);
+  fixedPorts = (cfg && cfg.fixed_ports) ? cfg.fixed_ports.slice() : [];
+  renderFixedPorts();
+}
+
+function renderFixedPorts() {
+  const el = document.getElementById('fixed-port-list');
+  if (!el) return;
+  if (fixedPorts.length === 0) {
+    el.innerHTML = '<div style="color:var(--gray-5);text-align:center;padding:8px">' + t('fixed.empty') + '</div>';
+    return;
+  }
+
+  el.innerHTML = fixedPorts.map((binding, index) => {
+    const proxy = allProxies.find(p => p.address === binding.proxy_address);
+    const active = !!proxy;
+    const color = active ? 'var(--green)' : 'var(--red)';
+    const status = active ? t('fixed.active') : t('fixed.unavailable');
+    const detail = proxy ? ((proxy.exit_ip || '—') + ' · ' + (proxy.exit_location || '—')) : status;
+    return '<div style="border-bottom:1px solid var(--border);padding:7px 0">' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+        '<span style="color:' + color + '">●</span>' +
+        '<strong style="color:var(--fg)">' + esc(binding.name || ('PORT ' + binding.port)) + '</strong>' +
+        '<span class="badge badge-' + binding.protocol + '" style="padding:1px 5px">' + binding.protocol.toUpperCase() + '</span>' +
+        '<span style="margin-left:auto;color:var(--yellow)">:' + binding.port + '</span>' +
+      '</div>' +
+      '<div style="margin:4px 0;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(binding.proxy_address) + '">' + esc(binding.proxy_address) + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;color:' + color + ';font-size:8px">' +
+        '<span>' + esc(detail) + '</span>' +
+        '<span><button class="btn-action" onclick="openFixedPortModal(' + index + ')">' + t('fixed.edit') + '</button> ' +
+        '<button class="btn-danger" onclick="deleteFixedPort(' + index + ')">' + t('fixed.delete') + '</button></span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function nextFixedPort() {
+  const used = new Set(fixedPorts.map(b => Number(b.port)));
+  let port = 7781;
+  while (used.has(port)) port++;
+  return port;
+}
+
+function populateFixedProxyOptions(selectedAddress) {
+  const select = document.getElementById('fixed-proxy');
+  let options = allProxies.map(p => {
+    const text = p.address + ' · ' + p.protocol.toUpperCase() + ' · ' + (p.exit_ip || '—') + ' · ' + (p.exit_location || '—');
+    return '<option value="' + esc(p.address) + '">' + esc(text) + '</option>';
+  });
+  if (selectedAddress && !allProxies.some(p => p.address === selectedAddress)) {
+    options.unshift('<option value="' + esc(selectedAddress) + '">' + esc(selectedAddress + ' · ' + t('fixed.unavailable')) + '</option>');
+  }
+  select.innerHTML = options.length ? options.join('') : '<option value="">' + t('fixed.select_proxy') + '</option>';
+  if (selectedAddress) select.value = selectedAddress;
+}
+
+function openFixedPortModal(index) {
+  editingFixedPort = Number.isInteger(index) ? index : -1;
+  const binding = editingFixedPort >= 0 ? fixedPorts[editingFixedPort] : null;
+  document.getElementById('fixed-name').value = binding ? (binding.name || '') : '';
+  document.getElementById('fixed-port').value = binding ? binding.port : nextFixedPort();
+  document.getElementById('fixed-protocol').value = binding ? binding.protocol : 'http';
+  populateFixedProxyOptions(binding ? binding.proxy_address : '');
+  document.getElementById('fixed-port-modal').style.display = 'flex';
+}
+
+function closeFixedPortModal() {
+  document.getElementById('fixed-port-modal').style.display = 'none';
+  editingFixedPort = -1;
+}
+
+async function saveFixedPort() {
+  const port = parseInt(document.getElementById('fixed-port').value);
+  const proxyAddress = document.getElementById('fixed-proxy').value;
+  if (!port || port < 1025 || port > 65535) { alert(t('fixed.invalid_port')); return; }
+  if (!proxyAddress) { alert(t('fixed.select_proxy')); return; }
+
+  const binding = {
+    name: document.getElementById('fixed-name').value.trim(),
+    port: port,
+    protocol: document.getElementById('fixed-protocol').value,
+    proxy_address: proxyAddress
+  };
+  const next = fixedPorts.slice();
+  if (editingFixedPort >= 0) next[editingFixedPort] = binding;
+  else next.push(binding);
+  if (await persistFixedPorts(next)) closeFixedPortModal();
+}
+
+async function deleteFixedPort(index) {
+  const binding = fixedPorts[index];
+  if (!binding || !confirm(t('fixed.delete_confirm').replace('{0}', binding.port))) return;
+  const next = fixedPorts.filter((_, i) => i !== index);
+  await persistFixedPorts(next);
+}
+
+async function persistFixedPorts(next) {
+  const cfg = await api('/api/config');
+  if (!cfg) return false;
+  cfg.fixed_ports = next;
+  const result = await api('/api/config/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cfg)
+  });
+  if (result && result.status === 'saved') {
+    fixedPorts = next;
+    renderFixedPorts();
+    showToast(t('fixed.saved'));
+    return true;
+  }
+  if (result && result.error) alert(result.error);
+  return false;
 }
 
 async function refreshProxy(address) {
@@ -1223,6 +1415,7 @@ async function loadProxies() {
   allProxies = proxies;
   updateCountryOptions();
   filterAndRender();
+  renderFixedPorts();
 }
 
 function updateCountryOptions() {
@@ -1466,6 +1659,7 @@ async function saveConfig() {
     custom_free_priority: document.getElementById('cfg-custom-mode').value === 'mixed_free_priority',
     custom_probe_interval: parseInt(document.getElementById('cfg-custom-probe').value),
     custom_refresh_interval: parseInt(document.getElementById('cfg-custom-refresh').value),
+    fixed_ports: fixedPorts,
   };
 
   const result = await api('/api/config/save', {

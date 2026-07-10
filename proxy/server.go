@@ -18,10 +18,11 @@ import (
 )
 
 type Server struct {
-	storage *storage.Storage
-	cfg     *config.Config
-	mode    string // "random" 或 "lowest-latency"
-	port    string
+	storage        *storage.Storage
+	cfg            *config.Config
+	mode           string // "random"、"lowest-latency" 或 "fixed"
+	port           string
+	fixedProxyAddr string
 }
 
 func New(s *storage.Storage, cfg *config.Config, mode string, port string) *Server {
@@ -33,10 +34,23 @@ func New(s *storage.Storage, cfg *config.Config, mode string, port string) *Serv
 	}
 }
 
+// NewFixed 创建绑定到指定上游节点的 HTTP 代理服务器
+func NewFixed(s *storage.Storage, cfg *config.Config, port, proxyAddr string) *Server {
+	return &Server{
+		storage:        s,
+		cfg:            cfg,
+		mode:           "fixed",
+		port:           port,
+		fixedProxyAddr: proxyAddr,
+	}
+}
+
 func (s *Server) Start() error {
 	modeDesc := "随机轮换"
 	if s.mode == "lowest-latency" {
 		modeDesc = "最低延迟"
+	} else if s.mode == "fixed" {
+		modeDesc = fmt.Sprintf("固定节点 %s", s.fixedProxyAddr)
 	}
 	authStatus := "无认证"
 	if s.cfg.ProxyAuthEnabled {
@@ -44,6 +58,11 @@ func (s *Server) Start() error {
 	}
 	log.Printf("proxy server listening on %s [%s] [%s]", s.port, modeDesc, authStatus)
 	return http.ListenAndServe(s.port, s)
+}
+
+// Serve 在已创建的监听器上运行 HTTP 代理，供固定端口管理器动态启停
+func (s *Server) Serve(listener net.Listener) error {
+	return http.Serve(listener, s)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +74,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	
+
 	if r.Method == http.MethodConnect {
 		s.handleTunnel(w, r)
 	} else {
@@ -69,36 +88,40 @@ func (s *Server) checkAuth(r *http.Request) bool {
 	if auth == "" {
 		return false
 	}
-	
+
 	// 解析 Basic Auth
 	const prefix = "Basic "
 	if !strings.HasPrefix(auth, prefix) {
 		return false
 	}
-	
+
 	decoded, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
 	if err != nil {
 		return false
 	}
-	
+
 	credentials := strings.SplitN(string(decoded), ":", 2)
 	if len(credentials) != 2 {
 		return false
 	}
-	
+
 	username := credentials[0]
 	password := credentials[1]
-	
+
 	// 验证用户名和密码
 	usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(s.cfg.ProxyAuthUsername)) == 1
 	passwordHash := fmt.Sprintf("%x", sha256.Sum256([]byte(password)))
 	passwordMatch := subtle.ConstantTimeCompare([]byte(passwordHash), []byte(s.cfg.ProxyAuthPasswordHash)) == 1
-	
+
 	return usernameMatch && passwordMatch
 }
 
 // selectProxy 根据使用模式和选择策略获取代理
 func (s *Server) selectProxy(tried []string, lowestLatency bool) (*storage.Proxy, error) {
+	if s.mode == "fixed" {
+		return s.storage.GetByAddress(s.fixedProxyAddr)
+	}
+
 	cfg := config.Get()
 	sourceFilter := sourceFilterFromMode(cfg.CustomProxyMode)
 
@@ -167,6 +190,9 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		client, err := s.buildClient(p)
 		if err != nil {
 			removeOrDisableProxy(s.storage, p)
+			if s.mode == "fixed" {
+				break
+			}
 			continue
 		}
 
@@ -183,6 +209,9 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[proxy] %s via %s failed, removing", r.RequestURI, p.Address)
 			s.storage.RecordProxyUse(p.Address, false)
 			removeOrDisableProxy(s.storage, p)
+			if s.mode == "fixed" {
+				break
+			}
 			continue
 		}
 		defer resp.Body.Close()
@@ -224,6 +253,9 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[tunnel] dial %s via %s failed, removing", r.Host, p.Address)
 			s.storage.RecordProxyUse(p.Address, false)
 			removeOrDisableProxy(s.storage, p)
+			if s.mode == "fixed" {
+				break
+			}
 			continue
 		}
 
