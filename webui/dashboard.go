@@ -65,6 +65,28 @@ body::after{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backgr
 .proxy-config-address{min-width:0;font-size:9px;color:var(--fg);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .proxy-copy-btn{height:26px;border:1px solid var(--border);background:var(--bg-card);color:var(--fg-dim);cursor:pointer;font-size:10px;font-family:var(--mono);transition:all 0.2s}
 .proxy-copy-btn:hover{background:var(--border);color:var(--fg);box-shadow:0 0 8px var(--border)}
+.fixed-port-header{display:flex;align-items:center;gap:6px;min-width:0}
+.fixed-port-endpoint{min-width:0;max-width:58%;margin-left:auto;display:flex;align-items:center;gap:6px}
+.fixed-port-address{min-width:0;color:var(--yellow);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.fixed-port-endpoint .proxy-copy-btn{width:28px;flex:0 0 28px}
+.fixed-port-upstream{display:flex;align-items:center;gap:6px;min-width:0;margin:4px 0}
+.fixed-port-upstream-address{min-width:0;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fixed-port-upstream .subscription-badge{flex:0 1 auto}
+.fixed-proxy-picker{position:relative}
+.fixed-proxy-search-wrap{position:relative}
+.fixed-proxy-search{width:100%;padding:11px 38px 11px 12px!important;background:var(--bg-card)!important;border:1px solid var(--border)!important;color:var(--fg)!important;font-family:var(--mono)!important;font-size:11px!important;outline:none}
+.fixed-proxy-search:focus{border-color:var(--border-heavy)!important;box-shadow:0 0 10px var(--border-heavy)!important}
+.fixed-proxy-chevron{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--fg);font-size:10px;pointer-events:none}
+.fixed-proxy-options{display:none;position:relative;z-index:120;max-height:280px;margin-top:4px;overflow-y:auto;background:var(--bg-elevated);border:1px solid var(--border-heavy);box-shadow:0 10px 30px rgba(0,0,0,0.8),0 0 14px rgba(0,255,65,0.18)}
+.fixed-proxy-options.show{display:block}
+.fixed-proxy-option{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;background:var(--bg-card);transition:background 0.15s,color 0.15s}
+.fixed-proxy-option:last-child{border-bottom:none}
+.fixed-proxy-option:hover,.fixed-proxy-option.active{background:var(--border);box-shadow:inset 3px 0 0 var(--fg)}
+.fixed-proxy-option-main{display:flex;align-items:center;gap:7px;min-width:0}
+.fixed-proxy-option-address{min-width:0;color:var(--fg);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fixed-proxy-option-meta{margin-top:5px;color:var(--gray-5);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fixed-proxy-option .subscription-badge{margin-left:auto;flex:0 1 auto}
+.fixed-proxy-empty{padding:18px;text-align:center;color:var(--gray-5);font-size:10px;text-transform:uppercase;letter-spacing:0.08em}
 
 /* 代理列表区域 */
 .proxy-section{display:block}
@@ -540,7 +562,17 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
         </div>
         <div class="form-group" style="grid-column:1/-1">
           <label data-i18n="fixed.upstream">上游节点</label>
-          <select id="fixed-proxy" style="width:100%;padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--fg);font-family:var(--mono);font-size:11px"></select>
+          <div class="fixed-proxy-picker" id="fixed-proxy-picker">
+            <div class="fixed-proxy-search-wrap">
+              <input class="fixed-proxy-search" type="text" id="fixed-proxy-search" autocomplete="off"
+                     onfocus="openFixedProxyOptions()" oninput="filterFixedProxyOptions()"
+                     onkeydown="handleFixedProxyKeydown(event)" data-i18n-placeholder="fixed.search_placeholder" placeholder="搜索地址、出口 IP、位置或订阅">
+              <span class="fixed-proxy-chevron">▼</span>
+            </div>
+            <input type="hidden" id="fixed-proxy">
+            <div class="fixed-proxy-options" id="fixed-proxy-options"></div>
+          </div>
+          <div class="form-help" id="fixed-proxy-selection"></div>
         </div>
       </div>
     </div>
@@ -725,6 +757,11 @@ const i18n = {
     'fixed.port_help': '端口范围 1025-65535，避开系统端口 7776-7780',
     'fixed.protocol': '本地协议',
     'fixed.upstream': '上游节点',
+    'fixed.search_placeholder': '搜索地址、协议、出口 IP、位置或订阅',
+    'fixed.no_results': '未找到匹配节点',
+    'fixed.selected': '已选择',
+    'fixed.subscription': '订阅',
+    'fixed.free_source': '免费节点',
     'fixed.empty': '暂无固定端口',
     'fixed.active': '正常',
     'fixed.unavailable': '节点失效',
@@ -914,6 +951,11 @@ const i18n = {
     'fixed.port_help': 'Range 1025-65535; avoid system ports 7776-7780',
     'fixed.protocol': 'Local Protocol',
     'fixed.upstream': 'Upstream Node',
+    'fixed.search_placeholder': 'Search address, protocol, exit IP, location, or subscription',
+    'fixed.no_results': 'No matching nodes',
+    'fixed.selected': 'Selected',
+    'fixed.subscription': 'Subscription',
+    'fixed.free_source': 'Free node',
     'fixed.empty': 'No fixed ports',
     'fixed.active': 'Active',
     'fixed.unavailable': 'Node unavailable',
@@ -1061,6 +1103,10 @@ function updateI18n() {
     const key = el.getAttribute('data-i18n-title');
     el.title = t(key);
   });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    el.placeholder = t(key);
+  });
   document.getElementById('lang-btn').textContent = currentLang === 'zh' ? 'EN' : '中';
   document.title = currentLang === 'zh' ? 'GoProxy — 智能代理池' : 'GoProxy — Intelligent Pool';
 
@@ -1083,6 +1129,10 @@ function toggleLang() {
   loadSubscriptions();
   loadPoolStatus();
   loadProxyConfig();
+  renderFixedPorts();
+  if (document.getElementById('fixed-proxy-options').classList.contains('show')) {
+    renderFixedProxyOptions(document.getElementById('fixed-proxy-search').value);
+  }
 }
 
 // 页面加载时恢复语言设置
@@ -1097,6 +1147,8 @@ let currentCountry = '';
 let allProxies = [];
 let fixedPorts = [];
 let editingFixedPort = -1;
+let fixedProxyResults = [];
+let fixedProxyActiveIndex = -1;
 let isAdmin = false; // 是否为管理员
 
 async function api(path, opts) {
@@ -1253,14 +1305,22 @@ function renderFixedPorts() {
     const color = active ? 'var(--green)' : 'var(--red)';
     const status = active ? t('fixed.active') : t('fixed.unavailable');
     const detail = proxy ? ((proxy.exit_ip || '—') + ' · ' + (proxy.exit_location || '—')) : status;
+    const endpoint = binding.protocol + '://' + proxyHost() + ':' + binding.port;
+    const subscriptionName = proxy && proxy.source === 'custom' ? (subNameMap[proxy.subscription_id] || t('fixed.subscription')) : '';
+    const subscriptionBadge = subscriptionName ? '<span class="subscription-badge" title="' + esc(subscriptionName) + '">' + esc(subscriptionName) + '</span>' : '';
     return '<div style="border-bottom:1px solid var(--border);padding:7px 0">' +
-      '<div style="display:flex;align-items:center;gap:6px">' +
+      '<div class="fixed-port-header">' +
         '<span style="color:' + color + '">●</span>' +
         '<strong style="color:var(--fg)">' + esc(binding.name || ('PORT ' + binding.port)) + '</strong>' +
         '<span class="badge badge-' + binding.protocol + '" style="padding:1px 5px">' + binding.protocol.toUpperCase() + '</span>' +
-        '<span style="margin-left:auto;color:var(--yellow)">:' + binding.port + '</span>' +
+        '<div class="fixed-port-endpoint">' +
+          '<span class="fixed-port-address" title="' + esc(endpoint) + '">' + esc(endpoint) + '</span>' +
+          '<button class="proxy-copy-btn" type="button" onclick="copyToClipboard(\'' + jsString(endpoint) + '\')" title="Copy">⧉</button>' +
+        '</div>' +
       '</div>' +
-      '<div style="margin:4px 0;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(binding.proxy_address) + '">' + esc(binding.proxy_address) + '</div>' +
+      '<div class="fixed-port-upstream" title="' + esc(binding.proxy_address) + '">' +
+        '<span class="fixed-port-upstream-address">' + esc(binding.proxy_address) + '</span>' + subscriptionBadge +
+      '</div>' +
       '<div style="display:flex;align-items:center;justify-content:space-between;color:' + color + ';font-size:8px">' +
         '<span>' + esc(detail) + '</span>' +
         '<span><button class="btn-action" onclick="openFixedPortModal(' + index + ')">' + t('fixed.edit') + '</button> ' +
@@ -1277,17 +1337,130 @@ function nextFixedPort() {
   return port;
 }
 
-function populateFixedProxyOptions(selectedAddress) {
-  const select = document.getElementById('fixed-proxy');
-  let options = allProxies.map(p => {
-    const text = p.address + ' · ' + p.protocol.toUpperCase() + ' · ' + (p.exit_ip || '—') + ' · ' + (p.exit_location || '—');
-    return '<option value="' + esc(p.address) + '">' + esc(text) + '</option>';
-  });
-  if (selectedAddress && !allProxies.some(p => p.address === selectedAddress)) {
-    options.unshift('<option value="' + esc(selectedAddress) + '">' + esc(selectedAddress + ' · ' + t('fixed.unavailable')) + '</option>');
+function fixedProxySubscriptionName(proxy) {
+  if (!proxy || proxy.source !== 'custom') return '';
+  return subNameMap[proxy.subscription_id] || t('fixed.subscription');
+}
+
+function fixedProxySearchText(proxy) {
+  return [
+    proxy.address,
+    proxy.protocol,
+    proxy.exit_ip,
+    proxy.exit_location,
+    fixedProxySubscriptionName(proxy)
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function fixedProxyDisplayText(proxy) {
+  if (!proxy) return '';
+  const subscriptionName = fixedProxySubscriptionName(proxy);
+  return proxy.address + ' · ' + proxy.protocol.toUpperCase() + ' · ' +
+    (proxy.exit_ip || '—') + ' · ' + (proxy.exit_location || '—') +
+    (subscriptionName ? ' · ' + subscriptionName : '');
+}
+
+function updateFixedProxySelection(proxyAddress) {
+  const input = document.getElementById('fixed-proxy-search');
+  const hidden = document.getElementById('fixed-proxy');
+  const selected = allProxies.find(p => p.address === proxyAddress);
+  hidden.value = proxyAddress || '';
+  input.value = selected ? fixedProxyDisplayText(selected) : (proxyAddress || '');
+
+  const selection = document.getElementById('fixed-proxy-selection');
+  if (!proxyAddress) {
+    selection.textContent = '';
+    return;
   }
-  select.innerHTML = options.length ? options.join('') : '<option value="">' + t('fixed.select_proxy') + '</option>';
-  if (selectedAddress) select.value = selectedAddress;
+  if (!selected) {
+    selection.innerHTML = '<span style="color:var(--red)">' + t('fixed.unavailable') + ': ' + esc(proxyAddress) + '</span>';
+    return;
+  }
+  const source = fixedProxySubscriptionName(selected) || t('fixed.free_source');
+  selection.innerHTML = t('fixed.selected') + ': <span style="color:var(--fg)">' + esc(selected.address) + '</span> · ' + esc(source);
+}
+
+function renderFixedProxyOptions(query) {
+  const options = document.getElementById('fixed-proxy-options');
+  const normalized = String(query || '').trim().toLowerCase();
+  fixedProxyResults = allProxies.filter(proxy => !normalized || fixedProxySearchText(proxy).includes(normalized));
+  fixedProxyActiveIndex = fixedProxyResults.length > 0 ? 0 : -1;
+
+  if (fixedProxyResults.length === 0) {
+    options.innerHTML = '<div class="fixed-proxy-empty">' + t('fixed.no_results') + '</div>';
+    return;
+  }
+
+  options.innerHTML = fixedProxyResults.map((proxy, index) => {
+    const subscriptionName = fixedProxySubscriptionName(proxy);
+    const sourceBadge = subscriptionName ? '<span class="subscription-badge" title="' + esc(subscriptionName) + '">' + esc(subscriptionName) + '</span>' : '';
+    const protocolClass = proxy.protocol === 'socks5' ? 'badge-socks5' : 'badge-http';
+    return '<div class="fixed-proxy-option' + (index === fixedProxyActiveIndex ? ' active' : '') + '" ' +
+      'onmousedown="event.preventDefault();selectFixedProxy(' + index + ')">' +
+      '<div class="fixed-proxy-option-main">' +
+        '<span class="fixed-proxy-option-address">' + esc(proxy.address) + '</span>' +
+        '<span class="badge ' + protocolClass + '" style="padding:1px 5px">' + proxy.protocol.toUpperCase() + '</span>' + sourceBadge +
+      '</div>' +
+      '<div class="fixed-proxy-option-meta">' + esc(proxy.exit_ip || '—') + ' · ' + esc(proxy.exit_location || '—') + ' · ' + (proxy.latency > 0 ? proxy.latency + 'ms' : '—') + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function openFixedProxyOptions() {
+  const input = document.getElementById('fixed-proxy-search');
+  input.select();
+  renderFixedProxyOptions('');
+  document.getElementById('fixed-proxy-options').classList.add('show');
+}
+
+function closeFixedProxyOptions() {
+  const options = document.getElementById('fixed-proxy-options');
+  if (options) options.classList.remove('show');
+}
+
+function filterFixedProxyOptions() {
+  document.getElementById('fixed-proxy').value = '';
+  document.getElementById('fixed-proxy-selection').textContent = '';
+  renderFixedProxyOptions(document.getElementById('fixed-proxy-search').value);
+  document.getElementById('fixed-proxy-options').classList.add('show');
+}
+
+function selectFixedProxy(index) {
+  const proxy = fixedProxyResults[index];
+  if (!proxy) return;
+  updateFixedProxySelection(proxy.address);
+  closeFixedProxyOptions();
+}
+
+function updateFixedProxyActiveOption() {
+  const options = document.querySelectorAll('.fixed-proxy-option');
+  options.forEach((option, index) => option.classList.toggle('active', index === fixedProxyActiveIndex));
+  if (fixedProxyActiveIndex >= 0 && options[fixedProxyActiveIndex]) {
+    options[fixedProxyActiveIndex].scrollIntoView({block: 'nearest'});
+  }
+}
+
+function handleFixedProxyKeydown(event) {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (fixedProxyResults.length === 0) return;
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    fixedProxyActiveIndex = (fixedProxyActiveIndex + direction + fixedProxyResults.length) % fixedProxyResults.length;
+    updateFixedProxyActiveOption();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    if (fixedProxyActiveIndex >= 0) selectFixedProxy(fixedProxyActiveIndex);
+  } else if (event.key === 'Escape') {
+    closeFixedProxyOptions();
+  }
+}
+
+function populateFixedProxyOptions(selectedAddress) {
+  fixedProxyResults = [];
+  fixedProxyActiveIndex = -1;
+  updateFixedProxySelection(selectedAddress);
+  renderFixedProxyOptions('');
+  closeFixedProxyOptions();
 }
 
 function openFixedPortModal(index) {
@@ -1301,6 +1474,7 @@ function openFixedPortModal(index) {
 }
 
 function closeFixedPortModal() {
+  closeFixedProxyOptions();
   document.getElementById('fixed-port-modal').style.display = 'none';
   editingFixedPort = -1;
 }
@@ -1348,6 +1522,11 @@ async function persistFixedPorts(next) {
   if (result && result.error) alert(result.error);
   return false;
 }
+
+document.addEventListener('mousedown', event => {
+  const picker = document.getElementById('fixed-proxy-picker');
+  if (picker && !picker.contains(event.target)) closeFixedProxyOptions();
+});
 
 async function refreshProxy(address) {
   const res = await api('/api/proxy/refresh', { address });
